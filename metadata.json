@@ -1,0 +1,5 @@
+{
+  "name": "SnailLabs DevHub",
+  "description": "A centralized administration hub for monitoring connected web applications, managing user access, and tracking subscriptions across the SnailLabs ecosystem.",
+  "requestFramePermissions": []
+}
