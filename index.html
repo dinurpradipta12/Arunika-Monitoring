@@ -21,10 +21,9 @@
     
     <script>
       // Polyfill process for browser environment to prevent crash on process.env access
-      // This ensures the app loads even if the API key isn't injected yet
       window.process = window.process || { env: { API_KEY: '' } };
     </script>
-  <script type="importmap">
+<script type="importmap">
 {
   "imports": {
     "@google/genai": "https://esm.sh/@google/genai@^1.39.0",
