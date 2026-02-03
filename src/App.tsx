@@ -17,12 +17,18 @@ import UserManager from './components/UserManager';
 
 import { User, ConnectedApp, ViewState } from './types';
 
-// Storage Key
+// Storage Keys
 const STORAGE_KEY = 'sl_devhub_connected_apps';
+const AUTH_STORAGE_KEY = 'sl_devhub_auth_session';
+
 const INITIAL_USERS: User[] = [];
 
 const App: React.FC = () => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  // Initialize Auth from localStorage
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return localStorage.getItem(AUTH_STORAGE_KEY) === 'true';
+  });
+
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
   
   // Initialize apps from localStorage if available
@@ -305,13 +311,19 @@ const App: React.FC = () => {
     setUsers(prev => prev.filter(u => u.sourceAppId !== id));
   };
 
+  const handleLoginSuccess = () => {
+    localStorage.setItem(AUTH_STORAGE_KEY, 'true');
+    setIsAuthenticated(true);
+  };
+
   const handleLogout = () => {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
     setIsAuthenticated(false);
     setCurrentView('dashboard');
   };
 
   if (!isAuthenticated) {
-    return <Login onLogin={() => setIsAuthenticated(true)} />;
+    return <Login onLogin={handleLoginSuccess} />;
   }
 
   const NavItem = ({ view, icon: Icon, label }: { view: ViewState; icon: React.ElementType; label: string; }) => (
