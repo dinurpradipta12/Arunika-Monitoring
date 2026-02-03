@@ -47,59 +47,101 @@ const App: React.FC = () => {
     return null;
   };
 
-  /* ---------- REAL DATA FETCHING ---------- */
+  /* ---------- REAL DATA FETCHING (DUAL TABLE) ---------- */
   const fetchAllRemoteUsers = async () => {
     let allUsers: User[] = [];
 
     for (const app of apps) {
-      // Logic: Use provided API Key + Derived URL from Host
       const apiUrl = getApiUrlFromHost(app.dbHost);
-
+      
+      // We need API Key and URL to proceed
       if (apiUrl && app.apiKey) {
-        try {
-          const tableName = app.tableName || 'registrations';
-          // Query: Get all registrations
-          const response = await fetch(`${apiUrl}/rest/v1/${tableName}?select=*&order=created_at.desc`, {
-            headers: {
-              'apikey': app.apiKey,
-              'Authorization': `Bearer ${app.apiKey}`
-            }
-          });
+        const headers = {
+          'apikey': app.apiKey,
+          'Authorization': `Bearer ${app.apiKey}`
+        };
 
-          if (response.ok) {
+        const registrationTable = app.tableName || 'registrations';
+        const usersTable = 'users';
+
+        // --- FETCH 1: REGISTRATIONS (Pending/Rejected) ---
+        const fetchRegistrations = async () => {
+          try {
+            const response = await fetch(`${apiUrl}/rest/v1/${registrationTable}?select=*&order=created_at.desc`, { headers });
+            if (!response.ok) return [];
             const data = await response.json();
-            
-            // Map Columns
-            const mappedUsers: User[] = data.map((record: any) => {
-              const rawStatus = (record.status || 'pending').toLowerCase();
+
+            return data.map((record: any) => {
               let feStatus: 'active' | 'pending' | 'suspended' = 'pending';
+              const rawStatus = (record.status || 'pending').toLowerCase();
               
-              if (rawStatus === 'approved' || rawStatus === 'active') feStatus = 'active';
-              else if (rawStatus === 'rejected' || rawStatus === 'suspended') feStatus = 'suspended';
+              if (rawStatus === 'rejected') feStatus = 'suspended';
+              else feStatus = 'pending'; // Approved ones should be deleted, so remaining are pending
 
               return {
-                id: record.id?.toString(),
-                name: record.name || record.full_name || 'Unknown User',
+                id: `REG-${record.id}`, // Prefix to avoid collision
+                originalId: record.id?.toString(),
+                name: record.name || 'Unknown Candidate',
                 email: record.email || 'no-email',
-                phoneNumber: record.whatsapp, 
-                password: record.password,    
+                phoneNumber: record.whatsapp,
+                password: record.password,
                 sourceAppId: app.id,
                 sourceAppName: app.name,
                 status: feStatus,
-                subscriptionTier: 'free', 
+                subscriptionTier: 'free',
                 registeredAt: record.created_at || new Date().toISOString(),
-                subscriptionEnd: record.subscription_expiry, 
-                lastActive: record.last_updated || record.created_at || 'Never',
-                reason: record.reason 
-              };
+                lastActive: record.created_at || 'Never',
+                reason: record.reason,
+                originTable: 'registrations'
+              } as User & { originTable: string, originalId: string };
             });
-            
-            allUsers = [...allUsers, ...mappedUsers];
-            updateAppUserCount(app.id, mappedUsers.length);
+          } catch (e) {
+            console.error(`Error fetching registrations for ${app.name}`, e);
+            return [];
           }
-        } catch (error) {
-          console.error(`Failed to fetch from ${app.name}`, error);
-        }
+        };
+
+        // --- FETCH 2: USERS (Active Users) ---
+        const fetchActiveUsers = async () => {
+          try {
+            const response = await fetch(`${apiUrl}/rest/v1/${usersTable}?select=*`, { headers });
+            if (!response.ok) return [];
+            const data = await response.json();
+
+            return data.map((record: any) => ({
+              id: `USR-${record.user_id || record.id}`,
+              originalId: record.user_id || record.id,
+              name: record.full_name || record.name || 'Active User',
+              email: record.email,
+              phoneNumber: record.whatsapp,
+              password: '***', 
+              sourceAppId: app.id,
+              sourceAppName: app.name,
+              status: 'active',
+              subscriptionTier: record.role === 'admin' ? 'pro' : 'free',
+              registeredAt: record.last_updated || new Date().toISOString(),
+              subscriptionEnd: record.subscription_expiry,
+              lastActive: record.last_updated || 'Recently',
+              reason: 'Imported from Users Table',
+              originTable: 'users'
+            } as User & { originTable: string, originalId: string }));
+          } catch (e) {
+            console.error(`Error fetching users for ${app.name}`, e);
+            return [];
+          }
+        };
+
+        // Execute both fetches in parallel
+        const [regData, usersData] = await Promise.all([fetchRegistrations(), fetchActiveUsers()]);
+
+        const activeEmails = new Set(usersData.map((u: any) => u.email));
+        
+        // Filter registrations: Ensure we don't show anyone who is already in Users table
+        const filteredRegs = regData.filter((r: any) => !activeEmails.has(r.email));
+
+        allUsers = [...allUsers, ...usersData, ...filteredRegs];
+        
+        updateAppUserCount(app.id, usersData.length + filteredRegs.length);
       }
     }
     
@@ -121,9 +163,10 @@ const App: React.FC = () => {
 
   /* ---------- UPDATE HANDLER ---------- */
   const handleUpdateUser = async (id: string, updates: Partial<User>) => {
+    // Optimistic Update
     setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...updates } : u)));
 
-    const userToUpdate = users.find(u => u.id === id);
+    const userToUpdate = users.find(u => u.id === id) as any; // Cast to access originTable
     if (!userToUpdate) return;
 
     const app = apps.find(a => a.id === userToUpdate.sourceAppId);
@@ -131,74 +174,81 @@ const App: React.FC = () => {
 
     if (app && apiUrl && app.apiKey) {
        try {
-         const tableName = app.tableName || 'registrations';
+         const headers = {
+            'apikey': app.apiKey,
+            'Authorization': `Bearer ${app.apiKey}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+         };
 
-         // SCENARIO 1: APPROVE
-         if (updates.status === 'active') {
-           // A. Update registration status
-           await fetch(`${apiUrl}/rest/v1/${tableName}?id=eq.${id}`, {
-             method: 'PATCH',
-             headers: {
-               'apikey': app.apiKey,
-               'Authorization': `Bearer ${app.apiKey}`,
-               'Content-Type': 'application/json',
-               'Prefer': 'return=minimal'
-             },
-             body: JSON.stringify({ status: 'approved' }) 
-           });
+         // === SCENARIO 1: APPROVING (Move from Registration -> Users) ===
+         if (updates.status === 'active' && userToUpdate.originTable === 'registrations') {
+            
+            const realId = userToUpdate.originalId; 
+            const regTable = app.tableName || 'registrations';
 
-           // B. Create 'users' record
-           const subscriptionExpiry = updates.subscriptionEnd || new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString();
-           
-           const newUserPayload = {
-             user_id: `USR-${id}-${Date.now()}`, 
-             full_name: userToUpdate.name,
-             email: userToUpdate.email,
-             role: 'viewer',
-             whatsapp: userToUpdate.phoneNumber,
-             status: 'active',
-             subscription_expiry: subscriptionExpiry,
-             performance_score: 0
-           };
+            const subscriptionExpiry = updates.subscriptionEnd || new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString();
+            
+            // 1. Insert into Users Table
+            const newUserPayload = {
+               user_id: `USR-${Date.now()}`, 
+               full_name: userToUpdate.name,
+               email: userToUpdate.email,
+               role: 'viewer',
+               whatsapp: userToUpdate.phoneNumber,
+               status: 'active',
+               subscription_expiry: subscriptionExpiry,
+               performance_score: 100
+            };
 
-           await fetch(`${apiUrl}/rest/v1/users`, {
-             method: 'POST',
-             headers: {
-               'apikey': app.apiKey,
-               'Authorization': `Bearer ${app.apiKey}`,
-               'Content-Type': 'application/json',
-               'Prefer': 'return=minimal'
-             },
-             body: JSON.stringify(newUserPayload)
-           });
-         } 
-         // SCENARIO 2: REJECT
-         else if (updates.status === 'suspended') {
-           await fetch(`${apiUrl}/rest/v1/${tableName}?id=eq.${id}`, {
-             method: 'PATCH',
-             headers: {
-               'apikey': app.apiKey,
-               'Authorization': `Bearer ${app.apiKey}`,
-               'Content-Type': 'application/json',
-               'Prefer': 'return=minimal'
-             },
-             body: JSON.stringify({ status: 'rejected' })
-           });
-         }
-         // SCENARIO 3: EXTEND SUB
-         else if (updates.subscriptionEnd) {
-           await fetch(`${apiUrl}/rest/v1/users?email=eq.${userToUpdate.email}`, {
-             method: 'PATCH',
-             headers: {
-               'apikey': app.apiKey,
-               'Authorization': `Bearer ${app.apiKey}`,
-               'Content-Type': 'application/json'
-             },
-             body: JSON.stringify({ subscription_expiry: updates.subscriptionEnd })
-           });
+            const createRes = await fetch(`${apiUrl}/rest/v1/users`, {
+               method: 'POST',
+               headers,
+               body: JSON.stringify(newUserPayload)
+            });
+
+            if (createRes.ok) {
+                // 2. DELETE from Registrations Table (Clean up pending queue)
+                await fetch(`${apiUrl}/rest/v1/${regTable}?id=eq.${realId}`, {
+                    method: 'DELETE',
+                    headers
+                });
+                console.log("Approved: User created and Registration deleted.");
+                
+                // Immediately remove from local state to prevent UI flicker before next sync
+                setUsers(prev => prev.filter(u => u.id !== id));
+            } else {
+                alert("Failed to create user in database. Registration was not deleted.");
+            }
          }
 
-         setTimeout(fetchAllRemoteUsers, 500);
+         // === SCENARIO 2: REJECTING ===
+         else if (updates.status === 'suspended' && userToUpdate.originTable === 'registrations') {
+            const realId = userToUpdate.originalId;
+            const regTable = app.tableName || 'registrations';
+            await fetch(`${apiUrl}/rest/v1/${regTable}?id=eq.${realId}`, {
+               method: 'PATCH',
+               headers,
+               body: JSON.stringify({ status: 'rejected' })
+            });
+         }
+
+         // === SCENARIO 3: UPDATING EXISTING USER (Subscription) ===
+         else if (userToUpdate.originTable === 'users') {
+            const realId = userToUpdate.originalId;
+            
+            if (updates.subscriptionEnd) {
+               // Update based on user_id
+               await fetch(`${apiUrl}/rest/v1/users?user_id=eq.${realId}`, {
+                  method: 'PATCH',
+                  headers,
+                  body: JSON.stringify({ subscription_expiry: updates.subscriptionEnd })
+               });
+            }
+         }
+
+         // Force Refresh to sync valid state
+         setTimeout(fetchAllRemoteUsers, 800);
 
        } catch (err) {
          console.error("Database sync failed", err);

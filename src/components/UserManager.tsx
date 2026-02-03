@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Search, Filter, Check, X, MoreVertical, BadgeCheck, Clock, RefreshCw, Loader2, Database, Eye, EyeOff, Calendar, Phone, Key, CreditCard, Server, ShieldCheck, CheckCheck, FileText } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, Filter, Check, X, MoreVertical, BadgeCheck, Clock, RefreshCw, Loader2, Database, Eye, EyeOff, Calendar, Phone, Key, CreditCard, Server, ShieldCheck, CheckCheck, FileText, CalendarClock, Save } from 'lucide-react';
 import { User, ConnectedApp } from '../types';
 
 interface UserManagerProps {
@@ -18,6 +18,9 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser, on
   const [showPassword, setShowPassword] = useState(false);
   const [isFetchingDetails, setIsFetchingDetails] = useState(false);
   
+  // Custom Date State
+  const [customDate, setCustomDate] = useState('');
+  
   // Sync Simulation State
   const [isSyncing, setIsSyncing] = useState(false);
   const [processingId, setProcessingId] = useState<string | null>(null);
@@ -29,6 +32,18 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser, on
   const pendingCount = users.filter(u => u.status === 'pending').length;
 
   const selectedUserApp = selectedUser ? apps.find(a => a.id === selectedUser.sourceAppId) : null;
+
+  useEffect(() => {
+    if (selectedUser && selectedUser.subscriptionEnd) {
+      // Format current expiry for input type="datetime-local" (YYYY-MM-DDTHH:mm)
+      const date = new Date(selectedUser.subscriptionEnd);
+      // Adjust to local ISO string
+      const localIso = new Date(date.getTime() - (date.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
+      setCustomDate(localIso);
+    } else {
+      setCustomDate('');
+    }
+  }, [selectedUser]);
 
   const handleUserClick = (user: User) => {
     setSelectedUser(user);
@@ -92,11 +107,23 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser, on
        onUpdateUser(id, { status: 'suspended' });
     }
   };
+  
+  const handleSaveCustomDate = () => {
+    if (selectedUser && customDate) {
+        // Convert local input back to ISO with Timezone
+        const dateObj = new Date(customDate);
+        onUpdateUser(selectedUser.id, { 
+            subscriptionEnd: dateObj.toISOString(),
+            status: 'active'
+        });
+        alert(`Subscription updated to ${dateObj.toLocaleString()}`);
+    }
+  };
 
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return 'N/A';
     return new Date(dateStr).toLocaleDateString('id-ID', {
-      day: 'numeric', month: 'long', year: 'numeric'
+      day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'
     });
   };
 
@@ -350,7 +377,7 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser, on
                     <div className="flex justify-between items-center mb-4">
                       <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                         <CreditCard className="h-4 w-4 text-indigo-600" />
-                        Subscription (Users Table)
+                        Subscription Plan
                       </h3>
                       <span className={`text-xs px-2 py-1 rounded-full font-medium ${
                         new Date(selectedUser.subscriptionEnd || '') < new Date() 
@@ -363,6 +390,29 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser, on
                       </span>
                     </div>
                     
+                    {/* Custom Date Picker */}
+                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-4">
+                       <label className="block text-xs font-medium text-slate-500 mb-2 flex items-center gap-1">
+                          <CalendarClock className="h-3 w-3" /> Set Custom Expiry (Date & Time)
+                       </label>
+                       <div className="flex gap-2">
+                          <input 
+                            type="datetime-local" 
+                            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                            value={customDate}
+                            onChange={(e) => setCustomDate(e.target.value)}
+                          />
+                          <button 
+                            onClick={handleSaveCustomDate}
+                            disabled={!customDate}
+                            className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-900 disabled:opacity-50 transition-colors flex items-center gap-2"
+                          >
+                            <Save className="h-4 w-4" /> Save
+                          </button>
+                       </div>
+                    </div>
+
+                    <p className="text-xs text-slate-400 font-medium mb-2 uppercase tracking-wide">Or Quick Add:</p>
                     <div className="grid grid-cols-3 gap-3">
                       <button 
                         onClick={() => onExtendSubscription?.(selectedUser.id, 'weekly')}
