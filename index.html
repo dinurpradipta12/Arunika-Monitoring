@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SnailLabs DevHub</title>
 
-    <!-- Tailwind CDN -->
+    <!-- Tailwind CDN (For rapid styling without build step issues) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
@@ -37,7 +37,9 @@
     </style>
     
     <script>
-      // Polyfill process for browser environment to prevent crash on process.env access
+      // CRITICAL: Polyfill process for browser environment.
+      // Cloudflare Pages or client-side navigation needs this to prevent "process is not defined" error
+      // when accessing process.env.API_KEY in the code.
       window.process = window.process || { env: { API_KEY: '' } };
     </script>
   <script type="importmap">
