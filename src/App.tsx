@@ -65,6 +65,16 @@ const App: React.FC = () => {
     setApps(prev => [...prev, newApp]);
   };
 
+  const handleUpdateApp = (appId: string, updates: Partial<ConnectedApp>) => {
+    setApps(prev => prev.map(app => app.id === appId ? { ...app, ...updates } : app));
+  };
+
+  const handleDeleteApp = (appId: string) => {
+    if (window.confirm('Are you sure you want to delete this project? This action cannot be undone.')) {
+      setApps(prev => prev.filter(app => app.id !== appId));
+    }
+  };
+
   const handleLogout = () => {
     setIsAuthenticated(false);
     setCurrentView('dashboard');
@@ -158,7 +168,12 @@ const App: React.FC = () => {
               <Dashboard users={users} apps={apps} onNavigate={setCurrentView} />
             )}
             {currentView === 'apps' && (
-              <ProjectManager apps={apps} onAddApp={handleAddApp} />
+              <ProjectManager 
+                apps={apps} 
+                onAddApp={handleAddApp} 
+                onUpdateApp={handleUpdateApp}
+                onDeleteApp={handleDeleteApp}
+              />
             )}
             {currentView === 'users' && (
               <UserManager users={users} apps={apps} onUpdateUser={handleUpdateUser} />
