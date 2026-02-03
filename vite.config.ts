@@ -12,6 +12,21 @@ export default defineConfig(({ mode }) => {
       // Safely replace process.env.API_KEY with the string value during build
       // This prevents "process is not defined" errors in production
       'process.env.API_KEY': JSON.stringify(env.API_KEY || '')
+    },
+    build: {
+      outDir: 'dist',
+      sourcemap: false,
+      minify: 'terser',
+      terserOptions: {
+        compress: {
+          drop_console: true
+        }
+      }
+    },
+    server: {
+      port: 3000,
+      strictPort: false,
+      host: true
     }
   };
 });

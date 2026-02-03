@@ -1,0 +1,4 @@
+# SPA Routing Configuration
+# All requests not matching files or folders get redirected to index.html
+
+/*    /index.html   200
