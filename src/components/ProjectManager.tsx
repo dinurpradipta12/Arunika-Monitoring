@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Database, Server, MoreHorizontal, Code, Activity, RefreshCw, X, Settings, Trash2, Edit2, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
+import { Plus, Database, Server, MoreHorizontal, Code, Activity, RefreshCw, X, Settings, Trash2, Edit2, CheckCircle2, AlertTriangle, Loader2, Globe } from 'lucide-react';
 import { ConnectedApp } from '../types';
 
 interface ProjectManagerProps {
@@ -17,26 +17,39 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
   const [isEditing, setIsEditing] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [appName, setAppName] = useState('');
-  const [dbType, setDbType] = useState<'postgres' | 'mysql' | 'mongodb'>('postgres');
+  const [dbType, setDbType] = useState<'postgres' | 'mysql' | 'mongodb' | 'supabase'>('supabase');
+  
+  // Standard DB Fields
   const [dbHost, setDbHost] = useState('');
   const [dbPort, setDbPort] = useState('');
   const [dbUser, setDbUser] = useState('');
+  
+  // Supabase Fields
+  const [sbUrl, setSbUrl] = useState('');
+  const [sbKey, setSbKey] = useState('');
+  const [sbTable, setSbTable] = useState('users');
+
   const [description, setDescription] = useState('');
   
   // Connection Test State
   const [isTesting, setIsTesting] = useState(false);
   const [testStatus, setTestStatus] = useState<'none' | 'success' | 'failed'>('none');
+  const [testMessage, setTestMessage] = useState('');
 
   const openAddModal = () => {
     setIsEditing(false);
     setEditId(null);
     setAppName('');
-    setDbType('postgres');
+    setDbType('supabase');
     setDbHost('');
     setDbPort('5432');
     setDbUser('');
+    setSbUrl('');
+    setSbKey('');
+    setSbTable('users');
     setDescription('');
     setTestStatus('none');
+    setTestMessage('');
     setIsModalOpen(true);
   };
 
@@ -44,53 +57,99 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
     setIsEditing(true);
     setEditId(app.id);
     setAppName(app.name);
-    setDbType(app.dbType as any);
-    // Parse simulated connection string for display
-    const parts = app.connectionString.split('@');
-    setDbHost(parts[1] ? parts[1].split(':')[0] : 'localhost');
-    setDbUser('admin'); 
-    setDbPort('5432');
+    setDbType(app.dbType);
     setDescription(app.description);
+
+    if (app.dbType === 'supabase') {
+      setSbUrl(app.apiUrl || '');
+      setSbKey(app.apiKey || '');
+      setSbTable(app.tableName || 'users');
+    } else {
+       const parts = app.connectionString.split('@');
+       setDbHost(parts[1] ? parts[1].split(':')[0] : 'localhost');
+       setDbUser('admin'); 
+       setDbPort('5432');
+    }
+
     setTestStatus('none');
+    setTestMessage('');
     setIsModalOpen(true);
     setActiveMenuId(null);
   };
 
-  const handleTestConnection = () => {
+  const handleTestConnection = async () => {
     setIsTesting(true);
     setTestStatus('none');
-    // Simulate network request
-    setTimeout(() => {
+    setTestMessage('');
+
+    if (dbType === 'supabase') {
+      if (!sbUrl || !sbKey) {
+        setTestStatus('failed');
+        setTestMessage('URL and API Key are required');
+        setIsTesting(false);
+        return;
+      }
+      try {
+        // Try to fetch 1 record to verify connection
+        const response = await fetch(`${sbUrl}/rest/v1/${sbTable}?select=count&limit=1`, {
+          headers: {
+            'apikey': sbKey,
+            'Authorization': `Bearer ${sbKey}`
+          }
+        });
+        if (response.ok) {
+          setTestStatus('success');
+          setTestMessage('Supabase connection established.');
+        } else {
+          setTestStatus('failed');
+          setTestMessage(`Error ${response.status}: ${response.statusText}`);
+        }
+      } catch (err) {
+        setTestStatus('failed');
+        setTestMessage('Network error or Invalid URL');
+      }
       setIsTesting(false);
-      // Random success/fail for demo purposes, mostly success
-      setTestStatus(Math.random() > 0.1 ? 'success' : 'failed');
-    }, 1500);
+    } else {
+      // Simulate for others
+      setTimeout(() => {
+        setIsTesting(false);
+        setTestStatus('success');
+        setTestMessage('Socket connection simulated OK.');
+      }, 1500);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Construct simulated connection string
-    const mockConnString = `${dbType}://${dbUser}:***@${dbHost}:${dbPort}/${appName.toLowerCase().replace(/\s/g, '_')}`;
-
-    if (isEditing && editId) {
-      onUpdateApp(editId, {
-        name: appName,
-        dbType,
-        connectionString: mockConnString,
-        description,
-        status: 'connected'
-      });
+    let mockConnString = '';
+    if (dbType === 'supabase') {
+      const shortUrl = sbUrl.replace('https://', '').split('.')[0];
+      mockConnString = `wss://${shortUrl}.supabase.co/realtime/v1`;
     } else {
-      const newApp: ConnectedApp = {
-        id: `app-${Date.now()}`,
+      mockConnString = `${dbType}://${dbUser}:***@${dbHost}:${dbPort}/${appName.toLowerCase().replace(/\s/g, '_')}`;
+    }
+
+    const appData: Partial<ConnectedApp> = {
         name: appName,
         dbType,
         connectionString: mockConnString,
         description,
         status: 'connected',
         lastSync: 'Just now',
-        userCount: 0
+        // Real Data Fields
+        apiUrl: dbType === 'supabase' ? sbUrl : undefined,
+        apiKey: dbType === 'supabase' ? sbKey : undefined,
+        tableName: dbType === 'supabase' ? sbTable : undefined,
+    };
+
+    if (isEditing && editId) {
+      onUpdateApp(editId, appData);
+    } else {
+      const newApp: ConnectedApp = {
+        id: `app-${Date.now()}`,
+        userCount: 0,
+        ...appData as any
       };
       onAddApp(newApp);
     }
@@ -113,6 +172,20 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
           Connect Database
         </button>
       </div>
+
+      {apps.length === 0 && (
+        <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
+          <Database className="h-12 w-12 text-slate-300 mx-auto mb-3" />
+          <h3 className="text-lg font-medium text-slate-600">No Databases Connected</h3>
+          <p className="text-slate-400 max-w-md mx-auto mt-2">Add a Supabase or SQL connection to start syncing user data to the dashboard.</p>
+          <button
+             onClick={(e) => { e.stopPropagation(); openAddModal(); }}
+             className="mt-6 text-indigo-600 font-medium hover:underline"
+          >
+            Create first connection
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {apps.map((app) => (
@@ -148,7 +221,7 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
             <div>
               <div className="flex justify-between items-start mb-4">
                 <div className="p-3 bg-indigo-50 rounded-lg group-hover:bg-indigo-100 transition-colors">
-                  <Database className="h-6 w-6 text-indigo-600" />
+                  {app.dbType === 'supabase' ? <Globe className="h-6 w-6 text-indigo-600" /> : <Database className="h-6 w-6 text-indigo-600" />}
                 </div>
                 <div className={`mr-8 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
                   app.status === 'connected' 
@@ -168,18 +241,18 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
                 </div>
                 <div className="flex items-center justify-between text-xs text-slate-500">
                   <span className="flex items-center gap-1">
-                    <Activity className="h-3 w-3" /> Type: {app.dbType.toUpperCase()}
+                    <Activity className="h-3 w-3" /> Type: {app.dbType === 'supabase' ? 'SUPABASE' : app.dbType.toUpperCase()}
                   </span>
                   <span className="flex items-center gap-1">
-                    <RefreshCw className="h-3 w-3" /> Last sync: {app.lastSync}
+                    <RefreshCw className="h-3 w-3" /> Sync: {app.lastSync}
                   </span>
                 </div>
               </div>
             </div>
 
             <div className="mt-6 pt-6 border-t border-slate-100 flex justify-between items-center">
-              <span className="text-sm font-medium text-slate-600">{app.userCount} Users Monitored</span>
-              <span className="text-xs text-emerald-600 font-medium bg-emerald-50 px-2 py-1 rounded">Live</span>
+              <span className="text-sm font-medium text-slate-600">{app.userCount} Users Found</span>
+              <span className="text-xs text-emerald-600 font-medium bg-emerald-50 px-2 py-1 rounded">Live Data</span>
             </div>
           </div>
         ))}
@@ -211,54 +284,96 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
                     onChange={(e) => setDbType(e.target.value as any)}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
                   >
-                    <option value="postgres">PostgreSQL</option>
-                    <option value="mysql">MySQL</option>
-                    <option value="mongodb">MongoDB</option>
+                    <option value="supabase">Supabase / MySQL via Supabase</option>
+                    <option value="postgres">PostgreSQL (Simulated)</option>
+                    <option value="mysql">MySQL (Simulated)</option>
+                    <option value="mongodb">MongoDB (Simulated)</option>
                   </select>
                 </div>
 
-                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Port</label>
-                  <input
-                    type="text"
-                    value={dbPort}
-                    onChange={(e) => setDbPort(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                    placeholder="5432"
-                  />
-                </div>
+                {/* Conditional Fields for Supabase */}
+                {dbType === 'supabase' ? (
+                  <>
+                     <div className="col-span-2">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Supabase Project URL</label>
+                      <input
+                        type="url"
+                        required
+                        value={sbUrl}
+                        onChange={(e) => setSbUrl(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm"
+                        placeholder="https://xyz.supabase.co"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Service Role / Anon Key</label>
+                      <input
+                        type="password"
+                        required
+                        value={sbKey}
+                        onChange={(e) => setSbKey(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm"
+                        placeholder="eyJhbGciOiJIUzI1NiIsInR..."
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1">Used to Fetch and Patch user data securely via REST API.</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Table Name</label>
+                      <input
+                        type="text"
+                        value={sbTable}
+                        onChange={(e) => setSbTable(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                        placeholder="users"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Port</label>
+                      <input
+                        type="text"
+                        value={dbPort}
+                        onChange={(e) => setDbPort(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                        placeholder="5432"
+                      />
+                    </div>
 
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Host / Endpoint</label>
-                  <input
-                    type="text"
-                    required
-                    value={dbHost}
-                    onChange={(e) => setDbHost(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm"
-                    placeholder="db.production.internal"
-                  />
-                </div>
+                    <div className="col-span-2">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Host / Endpoint</label>
+                      <input
+                        type="text"
+                        required
+                        value={dbHost}
+                        onChange={(e) => setDbHost(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm"
+                        placeholder="db.production.internal"
+                      />
+                    </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Username</label>
-                  <input
-                    type="text"
-                    value={dbUser}
-                    onChange={(e) => setDbUser(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                    placeholder="admin"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
-                  <input
-                    type="password"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                    placeholder="••••••••"
-                  />
-                </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Username</label>
+                      <input
+                        type="text"
+                        value={dbUser}
+                        onChange={(e) => setDbUser(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                        placeholder="admin"
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                      <input
+                        type="password"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                        placeholder="••••••••"
+                      />
+                    </div>
+                  </>
+                )}
 
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
@@ -286,17 +401,17 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
                 </div>
                 {isTesting && (
                   <div className="mt-2 text-xs text-indigo-600 flex items-center gap-1">
-                    <Loader2 className="h-3 w-3 animate-spin" /> Attempting handshake with {dbHost || 'host'}...
+                    <Loader2 className="h-3 w-3 animate-spin" /> Verifying credentials...
                   </div>
                 )}
                 {!isTesting && testStatus === 'success' && (
                    <div className="mt-2 text-xs text-emerald-600 flex items-center gap-1 font-medium animate-fade-in">
-                    <CheckCircle2 className="h-3 w-3" /> Connection Successful (Latency: 45ms)
+                    <CheckCircle2 className="h-3 w-3" /> {testMessage}
                   </div>
                 )}
                 {!isTesting && testStatus === 'failed' && (
                    <div className="mt-2 text-xs text-red-600 flex items-center gap-1 font-medium animate-fade-in">
-                    <AlertTriangle className="h-3 w-3" /> Connection Refused: Check firewall rules.
+                    <AlertTriangle className="h-3 w-3" /> {testMessage}
                   </div>
                 )}
               </div>

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Filter, Check, X, MoreVertical, BadgeCheck, Clock, RefreshCw, Loader2, Database, Eye, EyeOff, Calendar, Phone, Key, CreditCard, Server, ShieldCheck } from 'lucide-react';
+import { Search, Filter, Check, X, MoreVertical, BadgeCheck, Clock, RefreshCw, Loader2, Database, Eye, EyeOff, Calendar, Phone, Key, CreditCard, Server, ShieldCheck, CheckCheck } from 'lucide-react';
 import { User, ConnectedApp } from '../types';
 
 interface UserManagerProps {
@@ -25,6 +25,8 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser, on
   const filteredUsers = users
     .filter(u => filter === 'all' || u.status === filter)
     .filter(u => u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase()));
+  
+  const pendingCount = users.filter(u => u.status === 'pending').length;
 
   // Find the app definition for the selected user to simulate DB connection
   const selectedUserApp = selectedUser ? apps.find(a => a.id === selectedUser.sourceAppId) : null;
@@ -46,6 +48,29 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser, on
       setIsSyncing(false);
       // In real app, this would call Supabase .refresh()
     }, 1500);
+  };
+
+  const handleApproveAll = () => {
+    const pendingUsers = users.filter(u => u.status === 'pending');
+    if (pendingUsers.length === 0) return;
+
+    if (window.confirm(`Are you sure you want to approve all ${pendingUsers.length} pending users?`)) {
+      setProcessingId('bulk-approve');
+      
+      setTimeout(() => {
+        pendingUsers.forEach((user) => {
+          const nextMonth = new Date();
+          nextMonth.setMonth(nextMonth.getMonth() + 1);
+          
+          onUpdateUser(user.id, { 
+            status: 'active', 
+            registeredAt: new Date().toISOString(),
+            subscriptionEnd: nextMonth.toISOString()
+          });
+        });
+        setProcessingId(null);
+      }, 1500);
+    }
   };
 
   const handleApprove = (id: string, appName: string) => {
@@ -88,6 +113,14 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser, on
           <p className="text-slate-500 mt-1">Monitor realtime MySQL/Supabase registrations.</p>
         </div>
         <div className="flex gap-2">
+           <button 
+             onClick={handleApproveAll}
+             disabled={pendingCount === 0 || processingId !== null}
+             className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+           >
+             {processingId === 'bulk-approve' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
+             Approve All ({pendingCount})
+           </button>
            <button 
              onClick={handleSync}
              disabled={isSyncing}

@@ -16,12 +16,17 @@ export interface User {
 export interface ConnectedApp {
   id: string;
   name: string;
-  dbType: 'postgres' | 'mysql' | 'mongodb' | 'api';
-  connectionString: string; // Mocked connection string
+  dbType: 'postgres' | 'mysql' | 'mongodb' | 'supabase';
+  connectionString: string; // Used for display
   status: 'connected' | 'disconnected' | 'error';
   lastSync: string;
   userCount: number;
   description: string;
+  
+  // Fields for Real Data Fetching
+  apiUrl?: string;
+  apiKey?: string;
+  tableName?: string;
 }
 
 export interface DashboardStats {

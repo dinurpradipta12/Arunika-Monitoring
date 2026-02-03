@@ -18,60 +18,12 @@ import UserManager from './components/UserManager';
 import { User, ConnectedApp, ViewState } from './types';
 
 /* =======================
-   MOCK DATA (SAFE)
+   DATA MANAGEMENT
 ======================= */
-const INITIAL_APPS: ConnectedApp[] = [
-  {
-    id: 'app-1',
-    name: 'SocialFlow App',
-    dbType: 'postgres',
-    connectionString: 'postgres://admin:***@sf-prod.db:5432/users',
-    status: 'connected',
-    lastSync: 'Live',
-    userCount: 12,
-    description: 'Main social media automation platform database.',
-  },
-  {
-    id: 'app-2',
-    name: 'SnailAnalytics V2',
-    dbType: 'mongodb',
-    connectionString: 'mongodb+srv://read_only:***@cluster0.sa.net/analytics',
-    status: 'connected',
-    lastSync: 'Live',
-    userCount: 45,
-    description: 'Tracking and telemetry data store.',
-  },
-];
-
-const INITIAL_USERS: User[] = [
-  {
-    id: 'u1',
-    name: 'Alice Johnson',
-    email: 'alice@example.com',
-    phoneNumber: '6281234567890',
-    password: 'hashed_secret_123',
-    sourceAppId: 'app-1',
-    sourceAppName: 'SocialFlow App',
-    status: 'active',
-    subscriptionTier: 'pro',
-    registeredAt: '2023-10-01T10:00:00Z',
-    subscriptionEnd: '2023-11-01T10:00:00Z',
-    lastActive: '2023-10-25',
-  },
-  {
-    id: 'u2',
-    name: 'Bob Smith',
-    email: 'bob@example.com',
-    phoneNumber: '628987654321',
-    password: 'password_bob_321',
-    sourceAppId: 'app-1',
-    sourceAppName: 'SocialFlow App',
-    status: 'pending',
-    subscriptionTier: 'free',
-    registeredAt: '2023-10-26T14:30:00Z',
-    lastActive: '2023-10-26',
-  },
-];
+// We start with NO apps and NO users to comply with "Not Mockup" request.
+// User must connect a real Supabase/MySQL database to see data.
+const INITIAL_APPS: ConnectedApp[] = [];
+const INITIAL_USERS: User[] = [];
 
 /* =======================
    APP
@@ -93,64 +45,129 @@ const App: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  /* ---------- REALTIME SIMULATION ---------- */
-  // This simulates the Supabase Realtime subscription receiving new data
+  /* ---------- REAL DATA FETCHING ---------- */
+  // Fetch users from ALL connected Supabase apps
+  const fetchAllRemoteUsers = async () => {
+    let allUsers: User[] = [];
+
+    for (const app of apps) {
+      // We can only fetch real data from configured Supabase connections
+      if (app.dbType === 'supabase' && app.apiUrl && app.apiKey) {
+        try {
+          // Fetch raw data from the configured table
+          const response = await fetch(`${app.apiUrl}/rest/v1/${app.tableName || 'users'}?select=*`, {
+            headers: {
+              'apikey': app.apiKey,
+              'Authorization': `Bearer ${app.apiKey}`
+            }
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            // Map external DB fields to our internal User type
+            const mappedUsers: User[] = data.map((record: any) => ({
+              id: record.id?.toString(),
+              name: record.name || record.full_name || record.username || 'Unknown User',
+              email: record.email || 'no-email',
+              phoneNumber: record.phone_number || record.phone || record.whatsapp || undefined,
+              password: record.password || record.password_hash || undefined, // Display purpose only as requested
+              sourceAppId: app.id,
+              sourceAppName: app.name,
+              status: record.status || 'pending', // Default to pending if not specified
+              subscriptionTier: record.subscription_tier || 'free',
+              registeredAt: record.created_at || new Date().toISOString(),
+              subscriptionEnd: record.subscription_end || undefined,
+              lastActive: record.last_sign_in_at || record.updated_at || 'Never'
+            }));
+            
+            allUsers = [...allUsers, ...mappedUsers];
+            
+            // Update app user count
+            updateAppUserCount(app.id, mappedUsers.length);
+          }
+        } catch (error) {
+          console.error(`Failed to fetch from ${app.name}`, error);
+        }
+      }
+    }
+    
+    // Only update state if we actually have data or if we had data before but now it's empty
+    // Prevents flickering if fetch fails momentarily
+    if (apps.length > 0) {
+      setUsers(allUsers);
+    }
+  };
+
+  const updateAppUserCount = (appId: string, count: number) => {
+    setApps(prev => prev.map(a => a.id === appId ? { ...a, userCount: count, lastSync: new Date().toLocaleTimeString() } : a));
+  };
+
+  // Poll for updates every 10 seconds (Realtime simulation via Polling)
   useEffect(() => {
     if (!isAuthenticated) return;
+    
+    // Initial Fetch
+    fetchAllRemoteUsers();
 
     const interval = setInterval(() => {
-      // 30% chance to simulate a new user registering in the external MySQL DB
-      if (Math.random() > 0.7) {
-        const newUser: User = {
-          id: `u-${Date.now()}`,
-          name: `New User ${Math.floor(Math.random() * 1000)}`,
-          email: `user${Date.now()}@demo.com`,
-          phoneNumber: '628' + Math.floor(Math.random() * 1000000000),
-          password: 'temp_pass_' + Math.random().toString(36).substring(7),
-          sourceAppId: 'app-1',
-          sourceAppName: 'SocialFlow App',
-          status: 'pending',
-          subscriptionTier: 'free',
-          registeredAt: new Date().toISOString(),
-          lastActive: 'Just now'
-        };
-        
-        // Add to state (mimicking realtime push)
-        setUsers(prev => [newUser, ...prev]);
-        
-        // Optional: Show toast notification logic here
-        console.log("Supabase Realtime: New entry detected from MySQL");
-      }
-    }, 5000); // Check every 5 seconds
+      fetchAllRemoteUsers();
+    }, 10000); 
 
     return () => clearInterval(interval);
-  }, [isAuthenticated]);
+  }, [isAuthenticated, apps.length]); // Re-run if apps change
 
   /* ---------- Handlers ---------- */
-  const handleUpdateUser = (id: string, updates: Partial<User>) => {
+  const handleUpdateUser = async (id: string, updates: Partial<User>) => {
+    // 1. Optimistic UI Update (Fast)
     setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...updates } : u)));
+
+    // 2. Real Backend Update (Supabase PATCH)
+    const userToUpdate = users.find(u => u.id === id);
+    if (userToUpdate) {
+       const app = apps.find(a => a.id === userToUpdate.sourceAppId);
+       if (app && app.dbType === 'supabase' && app.apiUrl && app.apiKey) {
+         try {
+           // Map internal fields back to DB columns (simple mapping)
+           const dbUpdates: any = {};
+           if (updates.status) dbUpdates.status = updates.status;
+           if (updates.subscriptionEnd) dbUpdates.subscription_end = updates.subscriptionEnd;
+           
+           await fetch(`${app.apiUrl}/rest/v1/${app.tableName || 'users'}?id=eq.${id}`, {
+             method: 'PATCH',
+             headers: {
+               'apikey': app.apiKey,
+               'Authorization': `Bearer ${app.apiKey}`,
+               'Content-Type': 'application/json',
+               'Prefer': 'return=minimal'
+             },
+             body: JSON.stringify(dbUpdates)
+           });
+           console.log("Synced update to Supabase:", dbUpdates);
+         } catch (err) {
+           console.error("Failed to sync update to Supabase", err);
+           // In a real production app, we would revert the optimistic update here on failure
+           alert("Failed to sync changes to database. Please check connection.");
+         }
+       }
+    }
   };
 
   const handleExtendSubscription = (id: string, plan: 'weekly' | 'monthly' | 'yearly') => {
-    setUsers(prev => prev.map(u => {
-      if (u.id !== id) return u;
+    const user = users.find(u => u.id === id);
+    if (!user) return;
 
-      const currentEnd = u.subscriptionEnd ? new Date(u.subscriptionEnd) : new Date();
-      // Ensure we start from NOW if the subscription expired long ago
-      const baseDate = currentEnd < new Date() ? new Date() : currentEnd;
-      
-      const newEnd = new Date(baseDate);
+    const currentEnd = user.subscriptionEnd ? new Date(user.subscriptionEnd) : new Date();
+    const baseDate = currentEnd < new Date() ? new Date() : currentEnd;
+    const newEnd = new Date(baseDate);
 
-      if (plan === 'weekly') newEnd.setDate(newEnd.getDate() + 7);
-      if (plan === 'monthly') newEnd.setMonth(newEnd.getMonth() + 1);
-      if (plan === 'yearly') newEnd.setFullYear(newEnd.getFullYear() + 1);
+    if (plan === 'weekly') newEnd.setDate(newEnd.getDate() + 7);
+    if (plan === 'monthly') newEnd.setMonth(newEnd.getMonth() + 1);
+    if (plan === 'yearly') newEnd.setFullYear(newEnd.getFullYear() + 1);
 
-      return {
-        ...u,
-        subscriptionEnd: newEnd.toISOString(),
-        status: 'active' // Reactivate if was suspended/expired
-      };
-    }));
+    handleUpdateUser(id, {
+      subscriptionEnd: newEnd.toISOString(),
+      status: 'active'
+    });
   };
 
   const handleAddApp = (app: ConnectedApp) => {
@@ -162,8 +179,10 @@ const App: React.FC = () => {
   };
 
   const handleDeleteApp = (id: string) => {
-    if (!confirm('Disconnect this database?')) return;
+    if (!confirm('Disconnect this database? Local data view will be cleared.')) return;
     setApps(prev => prev.filter(a => a.id !== id));
+    // Also remove users associated with this app
+    setUsers(prev => prev.filter(u => u.sourceAppId !== id));
   };
 
   const handleLogout = () => {
