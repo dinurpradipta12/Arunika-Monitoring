@@ -27,7 +27,7 @@ const INITIAL_APPS: ConnectedApp[] = [
     dbType: 'postgres',
     connectionString: 'postgres://admin:***@sf-prod.db:5432/users',
     status: 'connected',
-    lastSync: '2 mins ago',
+    lastSync: 'Live',
     userCount: 12,
     description: 'Main social media automation platform database.',
   },
@@ -37,7 +37,7 @@ const INITIAL_APPS: ConnectedApp[] = [
     dbType: 'mongodb',
     connectionString: 'mongodb+srv://read_only:***@cluster0.sa.net/analytics',
     status: 'connected',
-    lastSync: '1 hour ago',
+    lastSync: 'Live',
     userCount: 45,
     description: 'Tracking and telemetry data store.',
   },
@@ -48,22 +48,27 @@ const INITIAL_USERS: User[] = [
     id: 'u1',
     name: 'Alice Johnson',
     email: 'alice@example.com',
+    phoneNumber: '6281234567890',
+    password: 'hashed_secret_123',
     sourceAppId: 'app-1',
     sourceAppName: 'SocialFlow App',
     status: 'active',
     subscriptionTier: 'pro',
-    registeredAt: '2023-10-01',
+    registeredAt: '2023-10-01T10:00:00Z',
+    subscriptionEnd: '2023-11-01T10:00:00Z',
     lastActive: '2023-10-25',
   },
   {
     id: 'u2',
     name: 'Bob Smith',
     email: 'bob@example.com',
+    phoneNumber: '628987654321',
+    password: 'password_bob_321',
     sourceAppId: 'app-1',
     sourceAppName: 'SocialFlow App',
     status: 'pending',
     subscriptionTier: 'free',
-    registeredAt: '2023-10-26',
+    registeredAt: '2023-10-26T14:30:00Z',
     lastActive: '2023-10-26',
   },
 ];
@@ -88,9 +93,64 @@ const App: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  /* ---------- REALTIME SIMULATION ---------- */
+  // This simulates the Supabase Realtime subscription receiving new data
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const interval = setInterval(() => {
+      // 30% chance to simulate a new user registering in the external MySQL DB
+      if (Math.random() > 0.7) {
+        const newUser: User = {
+          id: `u-${Date.now()}`,
+          name: `New User ${Math.floor(Math.random() * 1000)}`,
+          email: `user${Date.now()}@demo.com`,
+          phoneNumber: '628' + Math.floor(Math.random() * 1000000000),
+          password: 'temp_pass_' + Math.random().toString(36).substring(7),
+          sourceAppId: 'app-1',
+          sourceAppName: 'SocialFlow App',
+          status: 'pending',
+          subscriptionTier: 'free',
+          registeredAt: new Date().toISOString(),
+          lastActive: 'Just now'
+        };
+        
+        // Add to state (mimicking realtime push)
+        setUsers(prev => [newUser, ...prev]);
+        
+        // Optional: Show toast notification logic here
+        console.log("Supabase Realtime: New entry detected from MySQL");
+      }
+    }, 5000); // Check every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
+
   /* ---------- Handlers ---------- */
   const handleUpdateUser = (id: string, updates: Partial<User>) => {
     setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...updates } : u)));
+  };
+
+  const handleExtendSubscription = (id: string, plan: 'weekly' | 'monthly' | 'yearly') => {
+    setUsers(prev => prev.map(u => {
+      if (u.id !== id) return u;
+
+      const currentEnd = u.subscriptionEnd ? new Date(u.subscriptionEnd) : new Date();
+      // Ensure we start from NOW if the subscription expired long ago
+      const baseDate = currentEnd < new Date() ? new Date() : currentEnd;
+      
+      const newEnd = new Date(baseDate);
+
+      if (plan === 'weekly') newEnd.setDate(newEnd.getDate() + 7);
+      if (plan === 'monthly') newEnd.setMonth(newEnd.getMonth() + 1);
+      if (plan === 'yearly') newEnd.setFullYear(newEnd.getFullYear() + 1);
+
+      return {
+        ...u,
+        subscriptionEnd: newEnd.toISOString(),
+        status: 'active' // Reactivate if was suspended/expired
+      };
+    }));
   };
 
   const handleAddApp = (app: ConnectedApp) => {
@@ -206,6 +266,7 @@ const App: React.FC = () => {
               users={users}
               apps={apps}
               onUpdateUser={handleUpdateUser}
+              onExtendSubscription={handleExtendSubscription}
             />
           )}
 

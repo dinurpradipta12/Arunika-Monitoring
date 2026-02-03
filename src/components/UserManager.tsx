@@ -1,16 +1,22 @@
 import React, { useState } from 'react';
-import { Search, Filter, Check, X, MoreVertical, BadgeCheck, Clock, RefreshCw, Loader2, Database } from 'lucide-react';
+import { Search, Filter, Check, X, MoreVertical, BadgeCheck, Clock, RefreshCw, Loader2, Database, Eye, EyeOff, Calendar, Phone, Key, CreditCard, Server, ShieldCheck } from 'lucide-react';
 import { User, ConnectedApp } from '../types';
 
 interface UserManagerProps {
   users: User[];
   apps: ConnectedApp[];
   onUpdateUser: (userId: string, updates: Partial<User>) => void;
+  onExtendSubscription?: (userId: string, plan: 'weekly' | 'monthly' | 'yearly') => void;
 }
 
-const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser }) => {
-  const [filter, setFilter] = useState<'all' | 'pending' | 'active'>('pending'); // Default to pending as requested
+const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser, onExtendSubscription }) => {
+  const [filter, setFilter] = useState<'all' | 'pending' | 'active'>('pending');
   const [search, setSearch] = useState('');
+  
+  // Detail Modal State
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [isFetchingDetails, setIsFetchingDetails] = useState(false);
   
   // Sync Simulation State
   const [isSyncing, setIsSyncing] = useState(false);
@@ -20,21 +26,41 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser }) 
     .filter(u => filter === 'all' || u.status === filter)
     .filter(u => u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase()));
 
+  // Find the app definition for the selected user to simulate DB connection
+  const selectedUserApp = selectedUser ? apps.find(a => a.id === selectedUser.sourceAppId) : null;
+
+  const handleUserClick = (user: User) => {
+    setSelectedUser(user);
+    setIsFetchingDetails(true);
+    setShowPassword(false);
+
+    // Simulate network latency to the specific connected database
+    setTimeout(() => {
+      setIsFetchingDetails(false);
+    }, 1200);
+  };
+
   const handleSync = () => {
     setIsSyncing(true);
-    // Simulate fetching data from external databases
     setTimeout(() => {
       setIsSyncing(false);
-      alert(`Sync Complete: Scanned ${apps.length} connected databases. No new external records found.`);
-    }, 2000);
+      // In real app, this would call Supabase .refresh()
+    }, 1500);
   };
 
   const handleApprove = (id: string, appName: string) => {
     if (window.confirm(`Approving this user will grant them access to "${appName}". Continue?`)) {
       setProcessingId(id);
-      // Simulate API call to external app to update user status
       setTimeout(() => {
-        onUpdateUser(id, { status: 'active', registeredAt: new Date().toISOString() });
+        // Default 1 month subscription on approval
+        const nextMonth = new Date();
+        nextMonth.setMonth(nextMonth.getMonth() + 1);
+        
+        onUpdateUser(id, { 
+          status: 'active', 
+          registeredAt: new Date().toISOString(),
+          subscriptionEnd: nextMonth.toISOString()
+        });
         setProcessingId(null);
       }, 1000);
     }
@@ -46,12 +72,20 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser }) 
     }
   };
 
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return 'N/A';
+    return new Date(dateStr).toLocaleDateString('id-ID', {
+      day: 'numeric', month: 'long', year: 'numeric'
+    });
+  };
+
   return (
     <div className="space-y-6">
+      {/* Header & Filter Section */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">User Approvals</h1>
-          <p className="text-slate-500 mt-1">Monitor and approve new user registrations from connected apps.</p>
+          <p className="text-slate-500 mt-1">Monitor realtime MySQL/Supabase registrations.</p>
         </div>
         <div className="flex gap-2">
            <button 
@@ -60,7 +94,7 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser }) 
              className="flex items-center gap-2 px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-70"
            >
              {isSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-             {isSyncing ? 'Syncing DB...' : 'Sync Databases'}
+             {isSyncing ? 'Fetching...' : 'Force Sync'}
            </button>
         </div>
       </div>
@@ -92,7 +126,7 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser }) 
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
             <input
               type="text"
-              placeholder="Search users by name, email or app..."
+              placeholder="Search users..."
               className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-1 focus:ring-indigo-500 outline-none"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -108,9 +142,9 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser }) 
             <thead className="bg-slate-50 text-slate-600 font-medium border-b border-slate-200">
               <tr>
                 <th className="px-6 py-4">User Identity</th>
-                <th className="px-6 py-4">Origin Application</th>
-                <th className="px-6 py-4">Current Status</th>
-                <th className="px-6 py-4">Requested Plan</th>
+                <th className="px-6 py-4">Database Origin</th>
+                <th className="px-6 py-4">Status</th>
+                <th className="px-6 py-4">Subscription</th>
                 <th className="px-6 py-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -121,20 +155,20 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser }) 
                     <div className="flex flex-col items-center justify-center">
                       <Database className="h-10 w-10 text-slate-300 mb-2" />
                       <p className="font-medium">No users found</p>
-                      <p className="text-xs">Try running a Database Sync to fetch new records.</p>
+                      <p className="text-xs">Waiting for Supabase realtime events...</p>
                     </div>
                   </td>
                 </tr>
               ) : (
                 filteredUsers.map((user) => (
                   <tr key={user.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-4 cursor-pointer" onClick={() => handleUserClick(user)}>
                       <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold border border-slate-200">
+                        <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold border border-slate-200 hover:border-indigo-400 transition-colors">
                           {user.name.charAt(0)}
                         </div>
                         <div>
-                          <p className="font-semibold text-slate-800">{user.name}</p>
+                          <p className="font-semibold text-slate-800 hover:text-indigo-600">{user.name}</p>
                           <p className="text-slate-500 text-xs">{user.email}</p>
                         </div>
                       </div>
@@ -148,12 +182,12 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser }) 
                     <td className="px-6 py-4">
                       {user.status === 'pending' && (
                         <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-1 rounded-full text-xs font-medium border border-amber-100">
-                          <Clock className="h-3 w-3" /> Awaiting Approval
+                          <Clock className="h-3 w-3" /> Waiting
                         </span>
                       )}
                       {user.status === 'active' && (
                         <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full text-xs font-medium border border-emerald-100">
-                          <BadgeCheck className="h-3 w-3" /> Synced & Active
+                          <BadgeCheck className="h-3 w-3" /> Active
                         </span>
                       )}
                       {user.status === 'suspended' && (
@@ -163,7 +197,10 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser }) 
                       )}
                     </td>
                     <td className="px-6 py-4">
-                       <span className="text-slate-600 font-mono text-xs uppercase tracking-wider">{user.subscriptionTier}</span>
+                       <span className="text-slate-600 font-mono text-xs uppercase tracking-wider block">{user.subscriptionTier}</span>
+                       {user.status === 'active' && user.subscriptionEnd && (
+                         <span className="text-[10px] text-slate-400">Exp: {new Date(user.subscriptionEnd).toLocaleDateString()}</span>
+                       )}
                     </td>
                     <td className="px-6 py-4 text-right">
                       {user.status === 'pending' ? (
@@ -181,11 +218,14 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser }) 
                             className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium shadow-sm flex items-center gap-2 disabled:opacity-70"
                           >
                             {processingId === user.id && <Loader2 className="h-3 w-3 animate-spin" />}
-                            Approve Access
+                            Approve
                           </button>
                         </div>
                       ) : (
-                        <button className="text-slate-400 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-full">
+                        <button 
+                          onClick={() => handleUserClick(user)}
+                          className="text-slate-400 hover:text-indigo-600 p-2 hover:bg-indigo-50 rounded-full transition-colors"
+                        >
                           <MoreVertical className="h-4 w-4" />
                         </button>
                       )}
@@ -197,6 +237,154 @@ const UserManager: React.FC<UserManagerProps> = ({ users, apps, onUpdateUser }) 
           </table>
         </div>
       </div>
+
+      {/* USER DETAIL & SUBSCRIPTION MODAL */}
+      {selectedUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in" onClick={() => setSelectedUser(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden transition-all" onClick={(e) => e.stopPropagation()}>
+            
+            {/* Header */}
+            <div className="bg-indigo-600 px-6 py-5 flex justify-between items-start">
+              <div className="flex gap-4 items-center">
+                <div className="h-14 w-14 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white text-xl font-bold border border-white/30 shadow-inner">
+                  {selectedUser.name.charAt(0)}
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-white">{selectedUser.name}</h2>
+                  <p className="text-indigo-100 text-sm flex items-center gap-1 opacity-90">
+                    <Database className="h-3 w-3" /> 
+                    {selectedUserApp ? selectedUserApp.name : 'Unknown App'}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setSelectedUser(null)} className="text-white/70 hover:text-white transition-colors">
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Content Body */}
+            <div className="p-6 min-h-[400px]">
+              {isFetchingDetails ? (
+                <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-4 py-20">
+                  <div className="relative">
+                    <div className="absolute inset-0 bg-indigo-200 rounded-full animate-ping opacity-20"></div>
+                    <Server className="h-12 w-12 text-indigo-600 relative z-10" />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-medium text-slate-800 mb-1">Connecting to Remote Database...</p>
+                    <p className="text-xs font-mono text-slate-400 max-w-[200px] truncate mx-auto bg-slate-50 p-1 rounded">
+                      {selectedUserApp?.connectionString || 'Connecting...'}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6 animate-fade-in">
+                  
+                  {/* Connection Source Badge */}
+                  <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 flex items-start gap-3">
+                    <ShieldCheck className="h-5 w-5 text-emerald-600 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-bold text-emerald-700 uppercase tracking-wide">Secure Connection Established</p>
+                      <p className="text-xs text-emerald-600 mt-1">
+                        Data successfully retrieved from <span className="font-semibold">{selectedUserApp?.name}</span> via secured API channel.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Personal Info Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 hover:border-indigo-200 transition-colors">
+                      <p className="text-xs text-slate-500 mb-1 flex items-center gap-1"><Database className="h-3 w-3" /> Email Address</p>
+                      <p className="text-sm font-medium text-slate-800 break-all select-all">{selectedUser.email}</p>
+                    </div>
+                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 hover:border-indigo-200 transition-colors">
+                      <p className="text-xs text-slate-500 mb-1 flex items-center gap-1"><Phone className="h-3 w-3" /> WhatsApp / Phone</p>
+                      <p className="text-sm font-medium text-slate-800 font-mono select-all">{selectedUser.phoneNumber || '-'}</p>
+                    </div>
+                  </div>
+
+                  {/* Security Section (Password) */}
+                  <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
+                    <div className="flex justify-between items-center mb-1">
+                      <p className="text-xs text-amber-700 font-semibold flex items-center gap-1">
+                        <Key className="h-3 w-3" /> User Credentials
+                      </p>
+                      <button 
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="text-amber-600 hover:text-amber-800 transition-colors"
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                    <p className="font-mono text-sm text-slate-800 bg-white px-3 py-2 rounded border border-amber-200 break-all">
+                      {showPassword ? (selectedUser.password || 'No password set') : '••••••••••••••••'}
+                    </p>
+                  </div>
+
+                  <hr className="border-slate-100" />
+
+                  {/* Subscription Management */}
+                  <div>
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                        <CreditCard className="h-4 w-4 text-indigo-600" />
+                        Manage Subscription
+                      </h3>
+                      <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                        new Date(selectedUser.subscriptionEnd || '') < new Date() 
+                        ? 'bg-red-100 text-red-700' 
+                        : 'bg-emerald-100 text-emerald-700'
+                      }`}>
+                        {selectedUser.subscriptionEnd 
+                          ? `Exp: ${formatDate(selectedUser.subscriptionEnd)}` 
+                          : 'No Active Sub'}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-500 mb-3">
+                      Extending subscription will push updates to <span className="font-mono text-indigo-500">{selectedUserApp?.dbType}</span> database.
+                    </p>
+                    
+                    <div className="grid grid-cols-3 gap-3">
+                      <button 
+                        onClick={() => onExtendSubscription?.(selectedUser.id, 'weekly')}
+                        className="flex flex-col items-center justify-center p-3 border border-slate-200 rounded-xl hover:border-indigo-500 hover:bg-indigo-50 transition-all group"
+                      >
+                        <span className="text-xs text-slate-500 group-hover:text-indigo-600">Weekly</span>
+                        <span className="font-bold text-slate-800 text-lg group-hover:text-indigo-700">+7 Days</span>
+                      </button>
+                      <button 
+                        onClick={() => onExtendSubscription?.(selectedUser.id, 'monthly')}
+                        className="flex flex-col items-center justify-center p-3 border border-indigo-200 bg-indigo-50/50 rounded-xl hover:bg-indigo-100 transition-all group relative overflow-hidden"
+                      >
+                         <div className="absolute top-0 right-0 bg-indigo-500 text-white text-[9px] px-1.5 py-0.5 rounded-bl">POPULAR</div>
+                        <span className="text-xs text-indigo-600">Monthly</span>
+                        <span className="font-bold text-indigo-900 text-lg">+1 Month</span>
+                      </button>
+                      <button 
+                        onClick={() => onExtendSubscription?.(selectedUser.id, 'yearly')}
+                        className="flex flex-col items-center justify-center p-3 border border-slate-200 rounded-xl hover:border-indigo-500 hover:bg-indigo-50 transition-all group"
+                      >
+                        <span className="text-xs text-slate-500 group-hover:text-indigo-600">Yearly</span>
+                        <span className="font-bold text-slate-800 text-lg group-hover:text-indigo-700">+1 Year</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-slate-100 flex justify-end">
+                    <button 
+                      onClick={() => setSelectedUser(null)}
+                      className="px-6 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-medium transition-colors text-sm"
+                    >
+                      Close Details
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

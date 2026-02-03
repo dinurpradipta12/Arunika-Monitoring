@@ -2,11 +2,14 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  phoneNumber?: string; // WhatsApp
+  password?: string; // For display purpose as requested
   sourceAppId: string; // The ID of the app they registered from
   sourceAppName: string;
   status: 'active' | 'pending' | 'suspended';
   subscriptionTier: 'free' | 'pro' | 'enterprise';
   registeredAt: string;
+  subscriptionEnd?: string; // ISO Date string
   lastActive: string;
 }
 
