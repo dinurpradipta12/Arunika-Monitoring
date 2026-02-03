@@ -20,8 +20,6 @@ import { User, ConnectedApp, ViewState } from './types';
 /* =======================
    DATA MANAGEMENT
 ======================= */
-// We start with NO apps and NO users to comply with "Not Mockup" request.
-// User must connect a real Supabase/MySQL database to see data.
 const INITIAL_APPS: ConnectedApp[] = [];
 const INITIAL_USERS: User[] = [];
 
@@ -46,16 +44,16 @@ const App: React.FC = () => {
   }, []);
 
   /* ---------- REAL DATA FETCHING ---------- */
-  // Fetch users from ALL connected Supabase apps
   const fetchAllRemoteUsers = async () => {
     let allUsers: User[] = [];
 
     for (const app of apps) {
-      // We can only fetch real data from configured Supabase connections
       if (app.dbType === 'supabase' && app.apiUrl && app.apiKey) {
         try {
-          // Fetch raw data from the configured table
-          const response = await fetch(`${app.apiUrl}/rest/v1/${app.tableName || 'users'}?select=*`, {
+          // Fetch from the configured table (Defaulting to 'registrations' based on user need)
+          // We order by created_at desc to get newest first
+          const tableName = app.tableName || 'registrations';
+          const response = await fetch(`${app.apiUrl}/rest/v1/${tableName}?select=*&order=created_at.desc`, {
             headers: {
               'apikey': app.apiKey,
               'Authorization': `Bearer ${app.apiKey}`
@@ -64,25 +62,35 @@ const App: React.FC = () => {
 
           if (response.ok) {
             const data = await response.json();
-            // Map external DB fields to our internal User type
-            const mappedUsers: User[] = data.map((record: any) => ({
-              id: record.id?.toString(),
-              name: record.name || record.full_name || record.username || 'Unknown User',
-              email: record.email || 'no-email',
-              phoneNumber: record.phone_number || record.phone || record.whatsapp || undefined,
-              password: record.password || record.password_hash || undefined, // Display purpose only as requested
-              sourceAppId: app.id,
-              sourceAppName: app.name,
-              status: record.status || 'pending', // Default to pending if not specified
-              subscriptionTier: record.subscription_tier || 'free',
-              registeredAt: record.created_at || new Date().toISOString(),
-              subscriptionEnd: record.subscription_end || undefined,
-              lastActive: record.last_sign_in_at || record.updated_at || 'Never'
-            }));
+            
+            // MAP SQL COLUMNS TO FRONTEND TYPES
+            // SQL: id, name, email, password, whatsapp, reason, status, created_at
+            const mappedUsers: User[] = data.map((record: any) => {
+              // Normalize Status: Database 'approved'/'active' -> Frontend 'active'
+              const rawStatus = (record.status || 'pending').toLowerCase();
+              let feStatus: 'active' | 'pending' | 'suspended' = 'pending';
+              
+              if (rawStatus === 'approved' || rawStatus === 'active') feStatus = 'active';
+              else if (rawStatus === 'rejected' || rawStatus === 'suspended') feStatus = 'suspended';
+
+              return {
+                id: record.id?.toString(),
+                name: record.name || record.full_name || 'Unknown User',
+                email: record.email || 'no-email',
+                phoneNumber: record.whatsapp, // Specific to your SQL
+                password: record.password,    // Specific to your SQL
+                sourceAppId: app.id,
+                sourceAppName: app.name,
+                status: feStatus,
+                subscriptionTier: 'free', // Default, unless updated later
+                registeredAt: record.created_at || new Date().toISOString(),
+                subscriptionEnd: record.subscription_expiry, // Might be null for pending
+                lastActive: record.last_updated || record.created_at || 'Never',
+                reason: record.reason // Specific to your SQL
+              };
+            });
             
             allUsers = [...allUsers, ...mappedUsers];
-            
-            // Update app user count
             updateAppUserCount(app.id, mappedUsers.length);
           }
         } catch (error) {
@@ -91,8 +99,7 @@ const App: React.FC = () => {
       }
     }
     
-    // Only update state if we actually have data or if we had data before but now it's empty
-    // Prevents flickering if fetch fails momentarily
+    // Update state to reflect database reality
     if (apps.length > 0) {
       setUsers(allUsers);
     }
@@ -102,37 +109,33 @@ const App: React.FC = () => {
     setApps(prev => prev.map(a => a.id === appId ? { ...a, userCount: count, lastSync: new Date().toLocaleTimeString() } : a));
   };
 
-  // Poll for updates every 10 seconds (Realtime simulation via Polling)
+  // Poll for updates (Simulation of Realtime)
   useEffect(() => {
     if (!isAuthenticated) return;
-    
-    // Initial Fetch
     fetchAllRemoteUsers();
-
-    const interval = setInterval(() => {
-      fetchAllRemoteUsers();
-    }, 10000); 
-
+    const interval = setInterval(fetchAllRemoteUsers, 5000); // 5s polling for faster feedback
     return () => clearInterval(interval);
-  }, [isAuthenticated, apps.length]); // Re-run if apps change
+  }, [isAuthenticated, apps.length]);
 
-  /* ---------- Handlers ---------- */
+  /* ---------- LOGIC UPDATE USER (DUAL TABLE) ---------- */
   const handleUpdateUser = async (id: string, updates: Partial<User>) => {
-    // 1. Optimistic UI Update (Fast)
+    // 1. Optimistic UI Update
     setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...updates } : u)));
 
-    // 2. Real Backend Update (Supabase PATCH)
+    // 2. Real Backend Update
     const userToUpdate = users.find(u => u.id === id);
-    if (userToUpdate) {
-       const app = apps.find(a => a.id === userToUpdate.sourceAppId);
-       if (app && app.dbType === 'supabase' && app.apiUrl && app.apiKey) {
-         try {
-           // Map internal fields back to DB columns (simple mapping)
-           const dbUpdates: any = {};
-           if (updates.status) dbUpdates.status = updates.status;
-           if (updates.subscriptionEnd) dbUpdates.subscription_end = updates.subscriptionEnd;
+    if (!userToUpdate) return;
+
+    const app = apps.find(a => a.id === userToUpdate.sourceAppId);
+    if (app && app.dbType === 'supabase' && app.apiUrl && app.apiKey) {
+       try {
+         const tableName = app.tableName || 'registrations';
+
+         // === SCENARIO 1: APPROVING A USER ===
+         if (updates.status === 'active') {
            
-           await fetch(`${app.apiUrl}/rest/v1/${app.tableName || 'users'}?id=eq.${id}`, {
+           // A. Update 'registrations' table status to 'approved'
+           await fetch(`${app.apiUrl}/rest/v1/${tableName}?id=eq.${id}`, {
              method: 'PATCH',
              headers: {
                'apikey': app.apiKey,
@@ -140,14 +143,71 @@ const App: React.FC = () => {
                'Content-Type': 'application/json',
                'Prefer': 'return=minimal'
              },
-             body: JSON.stringify(dbUpdates)
+             body: JSON.stringify({ status: 'approved' }) // Match SQL 'approved' enum/varchar
            });
-           console.log("Synced update to Supabase:", dbUpdates);
-         } catch (err) {
-           console.error("Failed to sync update to Supabase", err);
-           // In a real production app, we would revert the optimistic update here on failure
-           alert("Failed to sync changes to database. Please check connection.");
+
+           // B. Insert into 'users' table (Active Users Table)
+           // We create a new entry in the 'users' table as per your SQL schema
+           const subscriptionExpiry = updates.subscriptionEnd || new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString();
+           
+           const newUserPayload = {
+             user_id: `USR-${id}-${Date.now()}`, // Generate a unique string ID
+             full_name: userToUpdate.name,
+             email: userToUpdate.email,
+             role: 'viewer',
+             whatsapp: userToUpdate.phoneNumber,
+             status: 'active',
+             subscription_expiry: subscriptionExpiry,
+             performance_score: 0
+           };
+
+           await fetch(`${app.apiUrl}/rest/v1/users`, {
+             method: 'POST',
+             headers: {
+               'apikey': app.apiKey,
+               'Authorization': `Bearer ${app.apiKey}`,
+               'Content-Type': 'application/json',
+               'Prefer': 'return=minimal'
+             },
+             body: JSON.stringify(newUserPayload)
+           });
+
+           console.log("User approved: Updated registration and created active user record.");
+         } 
+         // === SCENARIO 2: REJECTING/SUSPENDING ===
+         else if (updates.status === 'suspended') {
+           await fetch(`${app.apiUrl}/rest/v1/${tableName}?id=eq.${id}`, {
+             method: 'PATCH',
+             headers: {
+               'apikey': app.apiKey,
+               'Authorization': `Bearer ${app.apiKey}`,
+               'Content-Type': 'application/json',
+               'Prefer': 'return=minimal'
+             },
+             body: JSON.stringify({ status: 'rejected' })
+           });
          }
+         // === SCENARIO 3: UPDATING SUBSCRIPTION ONLY ===
+         else if (updates.subscriptionEnd) {
+           // We might need to update the 'users' table specifically for sub updates
+           // Assumption: We look up by email since IDs might differ between tables
+           await fetch(`${app.apiUrl}/rest/v1/users?email=eq.${userToUpdate.email}`, {
+             method: 'PATCH',
+             headers: {
+               'apikey': app.apiKey,
+               'Authorization': `Bearer ${app.apiKey}`,
+               'Content-Type': 'application/json'
+             },
+             body: JSON.stringify({ subscription_expiry: updates.subscriptionEnd })
+           });
+         }
+
+         // Trigger refresh to sync state
+         setTimeout(fetchAllRemoteUsers, 500);
+
+       } catch (err) {
+         console.error("Database sync failed", err);
+         alert("Failed to sync with database. Check console for details.");
        }
     }
   };
@@ -156,7 +216,9 @@ const App: React.FC = () => {
     const user = users.find(u => u.id === id);
     if (!user) return;
 
+    // Logic to calculate new date
     const currentEnd = user.subscriptionEnd ? new Date(user.subscriptionEnd) : new Date();
+    // If expired, start from today
     const baseDate = currentEnd < new Date() ? new Date() : currentEnd;
     const newEnd = new Date(baseDate);
 
@@ -181,7 +243,6 @@ const App: React.FC = () => {
   const handleDeleteApp = (id: string) => {
     if (!confirm('Disconnect this database? Local data view will be cleared.')) return;
     setApps(prev => prev.filter(a => a.id !== id));
-    // Also remove users associated with this app
     setUsers(prev => prev.filter(u => u.sourceAppId !== id));
   };
 
@@ -190,21 +251,11 @@ const App: React.FC = () => {
     setCurrentView('dashboard');
   };
 
-  /* ---------- LOGIN GUARD ---------- */
   if (!isAuthenticated) {
     return <Login onLogin={() => setIsAuthenticated(true)} />;
   }
 
-  /* ---------- NAV ITEM ---------- */
-  const NavItem = ({
-    view,
-    icon: Icon,
-    label,
-  }: {
-    view: ViewState;
-    icon: React.ElementType;
-    label: string;
-  }) => (
+  const NavItem = ({ view, icon: Icon, label }: { view: ViewState; icon: React.ElementType; label: string; }) => (
     <button
       onClick={() => setCurrentView(view)}
       className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition ${
@@ -218,10 +269,8 @@ const App: React.FC = () => {
     </button>
   );
 
-  /* ---------- RENDER ---------- */
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
-      {/* Sidebar */}
       <aside
         className={`${
           isSidebarOpen ? 'w-64' : 'w-0 -translate-x-full'
@@ -255,7 +304,6 @@ const App: React.FC = () => {
         </div>
       </aside>
 
-      {/* Main */}
       <main className="flex-1 flex flex-col">
         <header className="h-16 bg-white border-b flex items-center px-6">
           <button

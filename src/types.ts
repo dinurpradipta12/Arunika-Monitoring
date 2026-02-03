@@ -2,22 +2,23 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  phoneNumber?: string; // WhatsApp
-  password?: string; // For display purpose as requested
-  sourceAppId: string; // The ID of the app they registered from
+  phoneNumber?: string; // Mapped from 'whatsapp' column
+  password?: string; 
+  sourceAppId: string; 
   sourceAppName: string;
   status: 'active' | 'pending' | 'suspended';
   subscriptionTier: 'free' | 'pro' | 'enterprise';
   registeredAt: string;
-  subscriptionEnd?: string; // ISO Date string
+  subscriptionEnd?: string; // Mapped from 'subscription_expiry'
   lastActive: string;
+  reason?: string; // New field from 'registrations' table
 }
 
 export interface ConnectedApp {
   id: string;
   name: string;
   dbType: 'postgres' | 'mysql' | 'mongodb' | 'supabase';
-  connectionString: string; // Used for display
+  connectionString: string; 
   status: 'connected' | 'disconnected' | 'error';
   lastSync: string;
   userCount: number;
@@ -26,7 +27,7 @@ export interface ConnectedApp {
   // Fields for Real Data Fetching
   apiUrl?: string;
   apiKey?: string;
-  tableName?: string;
+  tableName?: string; // Should be 'registrations' for approval flow
 }
 
 export interface DashboardStats {
