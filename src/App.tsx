@@ -6,44 +6,40 @@ import ProjectManager from './components/ProjectManager';
 import UserManager from './components/UserManager';
 import { User, ConnectedApp, ViewState } from './types';
 
-// Initial Mock Data
+// Initial Mock Data with Database Context
 const INITIAL_APPS: ConnectedApp[] = [
   {
     id: 'app-1',
-    name: 'SocialFlow',
-    databaseId: 'db_sf_prod_8823',
+    name: 'SocialFlow App',
+    dbType: 'postgres',
+    connectionString: 'postgres://admin:***@sf-prod.db:5432/users',
     status: 'connected',
-    apiKey: 'sk_live_sf_9921',
+    lastSync: '2 mins ago',
     userCount: 12,
-    description: 'Social media automation and scheduling platform.'
+    description: 'Main social media automation platform database.'
   },
   {
     id: 'app-2',
-    name: 'SnailAnalytics',
-    databaseId: 'db_sa_v2_1102',
+    name: 'SnailAnalytics V2',
+    dbType: 'mongodb',
+    connectionString: 'mongodb+srv://read_only:***@cluster0.sa.net/analytics',
     status: 'connected',
-    apiKey: 'sk_live_sa_4421',
+    lastSync: '1 hour ago',
     userCount: 45,
-    description: 'Internal tracking tool for campaign metrics.'
+    description: 'Tracking and telemetry data store.'
   }
 ];
 
 const INITIAL_USERS: User[] = [
-  { id: 'u1', name: 'Alice Johnson', email: 'alice@example.com', sourceAppId: 'app-1', sourceAppName: 'SocialFlow', status: 'active', subscriptionTier: 'pro', registeredAt: '2023-10-01', lastActive: '2023-10-25' },
-  { id: 'u2', name: 'Bob Smith', email: 'bob@example.com', sourceAppId: 'app-1', sourceAppName: 'SocialFlow', status: 'pending', subscriptionTier: 'free', registeredAt: '2023-10-26', lastActive: '2023-10-26' },
-  { id: 'u3', name: 'Charlie Davis', email: 'charlie@tech.co', sourceAppId: 'app-2', sourceAppName: 'SnailAnalytics', status: 'active', subscriptionTier: 'enterprise', registeredAt: '2023-09-15', lastActive: '2023-10-24' },
-  { id: 'u4', name: 'Diana Prince', email: 'diana@corp.net', sourceAppId: 'app-1', sourceAppName: 'SocialFlow', status: 'pending', subscriptionTier: 'pro', registeredAt: '2023-10-27', lastActive: '2023-10-27' },
-  { id: 'u5', name: 'Ethan Hunt', email: 'ethan@imf.org', sourceAppId: 'app-2', sourceAppName: 'SnailAnalytics', status: 'active', subscriptionTier: 'pro', registeredAt: '2023-10-05', lastActive: '2023-10-22' },
+  { id: 'u1', name: 'Alice Johnson', email: 'alice@example.com', sourceAppId: 'app-1', sourceAppName: 'SocialFlow App', status: 'active', subscriptionTier: 'pro', registeredAt: '2023-10-01', lastActive: '2023-10-25' },
+  { id: 'u2', name: 'Bob Smith', email: 'bob@example.com', sourceAppId: 'app-1', sourceAppName: 'SocialFlow App', status: 'pending', subscriptionTier: 'free', registeredAt: '2023-10-26', lastActive: '2023-10-26' },
+  { id: 'u3', name: 'Charlie Davis', email: 'charlie@tech.co', sourceAppId: 'app-2', sourceAppName: 'SnailAnalytics V2', status: 'active', subscriptionTier: 'enterprise', registeredAt: '2023-09-15', lastActive: '2023-10-24' },
+  { id: 'u4', name: 'Diana Prince', email: 'diana@corp.net', sourceAppId: 'app-1', sourceAppName: 'SocialFlow App', status: 'pending', subscriptionTier: 'pro', registeredAt: '2023-10-27', lastActive: '2023-10-27' },
+  { id: 'u5', name: 'Ethan Hunt', email: 'ethan@imf.org', sourceAppId: 'app-2', sourceAppName: 'SnailAnalytics V2', status: 'active', subscriptionTier: 'pro', registeredAt: '2023-10-05', lastActive: '2023-10-22' },
 ];
 
 const App: React.FC = () => {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    try {
-      return typeof window !== 'undefined' && !!localStorage.getItem('auth');
-    } catch {
-      return false;
-    }
-  });
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
   const [apps, setApps] = useState<ConnectedApp[]>(INITIAL_APPS);
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
@@ -76,7 +72,7 @@ const App: React.FC = () => {
   };
 
   const handleDeleteApp = (appId: string) => {
-    if (window.confirm('Are you sure you want to delete this project? This action cannot be undone.')) {
+    if (window.confirm('Are you sure you want to disconnect this database? This will stop user monitoring.')) {
       setApps(prev => prev.filter(app => app.id !== appId));
     }
   };
@@ -84,16 +80,10 @@ const App: React.FC = () => {
   const handleLogout = () => {
     setIsAuthenticated(false);
     setCurrentView('dashboard');
-    try { localStorage.removeItem('auth'); } catch {}
-  };
-
-  const handleLogin = () => {
-    setIsAuthenticated(true);
-    try { localStorage.setItem('auth', '1'); } catch {}
   };
 
   if (!isAuthenticated) {
-    return <Login onLogin={handleLogin} />;
+    return <Login onLogin={() => setIsAuthenticated(true)} />;
   }
 
   const NavItem = ({ view, icon: Icon, label }: { view: ViewState, icon: any, label: string }) => (
@@ -124,22 +114,22 @@ const App: React.FC = () => {
           </div>
           <div>
             <h1 className="font-bold text-slate-800 text-lg leading-tight">DevHub</h1>
-            <p className="text-[10px] text-slate-500 font-medium tracking-wider uppercase">SnailLabs Admin</p>
+            <p className="text-[10px] text-slate-500 font-medium tracking-wider uppercase">Database Monitor</p>
           </div>
         </div>
 
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
           <div className="px-4 pb-2">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Main</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Monitoring</p>
           </div>
-          <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
-          <NavItem view="users" icon={Users} label="User Management" />
+          <NavItem view="dashboard" icon={LayoutDashboard} label="Overview" />
+          <NavItem view="users" icon={Users} label="User Approvals" />
           
           <div className="px-4 pb-2 pt-6">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Development</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Configuration</p>
           </div>
-          <NavItem view="apps" icon={Boxes} label="Projects & Apps" />
-          <NavItem view="settings" icon={Settings} label="Settings" />
+          <NavItem view="apps" icon={Boxes} label="Database Connections" />
+          <NavItem view="settings" icon={Settings} label="System Settings" />
         </nav>
 
         <div className="p-4 border-t border-slate-200">
@@ -166,7 +156,7 @@ const App: React.FC = () => {
           <div className="flex items-center gap-4 ml-auto">
             <div className="hidden md:flex flex-col items-end mr-2">
               <span className="text-sm font-semibold text-slate-800">Admin SC</span>
-              <span className="text-xs text-slate-500">Super Administrator</span>
+              <span className="text-xs text-slate-500">Database Admin</span>
             </div>
             <div className="h-10 w-10 rounded-full bg-slate-200 border-2 border-white shadow-sm overflow-hidden">
                <img src="https://picsum.photos/200" alt="Admin" className="h-full w-full object-cover" />

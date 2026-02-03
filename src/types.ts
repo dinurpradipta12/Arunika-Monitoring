@@ -13,9 +13,10 @@ export interface User {
 export interface ConnectedApp {
   id: string;
   name: string;
-  databaseId: string; // The external DB ID
+  dbType: 'postgres' | 'mysql' | 'mongodb' | 'api';
+  connectionString: string; // Mocked connection string
   status: 'connected' | 'disconnected' | 'error';
-  apiKey: string;
+  lastSync: string;
   userCount: number;
   description: string;
 }
