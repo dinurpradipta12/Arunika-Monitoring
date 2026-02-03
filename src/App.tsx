@@ -17,15 +17,32 @@ import UserManager from './components/UserManager';
 
 import { User, ConnectedApp, ViewState } from './types';
 
-const INITIAL_APPS: ConnectedApp[] = [];
+// Storage Key
+const STORAGE_KEY = 'sl_devhub_connected_apps';
 const INITIAL_USERS: User[] = [];
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
-  const [apps, setApps] = useState<ConnectedApp[]>(INITIAL_APPS);
+  
+  // Initialize apps from localStorage if available
+  const [apps, setApps] = useState<ConnectedApp[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      console.error("Failed to load saved connections", e);
+      return [];
+    }
+  });
+
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  // Persist apps to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(apps));
+  }, [apps]);
 
   useEffect(() => {
     const handleResize = () => {
