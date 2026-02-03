@@ -18,16 +18,23 @@ export interface ConnectedApp {
   id: string;
   name: string;
   dbType: 'postgres' | 'mysql' | 'mongodb' | 'supabase';
-  connectionString: string; 
+  
+  // Visual Connection Fields (User Input)
+  dbHost?: string;      // e.g., db.ref.supabase.co
+  dbPort?: string;      // e.g., 5432
+  dbUser?: string;      // e.g., postgres
+  dbPass?: string;      // Saved but not used for API (security)
+  dbName?: string;      // e.g., postgres
+  
+  // Functional Fields
+  apiKey?: string;      // REQUIRED for Web Browser to access Supabase
+  tableName?: string;   // 'registrations'
+  
+  connectionString: string; // Display string
   status: 'connected' | 'disconnected' | 'error';
   lastSync: string;
   userCount: number;
   description: string;
-  
-  // Fields for Real Data Fetching
-  apiUrl?: string;
-  apiKey?: string;
-  tableName?: string; // Should be 'registrations' for approval flow
 }
 
 export interface DashboardStats {

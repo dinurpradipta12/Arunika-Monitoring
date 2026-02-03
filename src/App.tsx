@@ -17,15 +17,9 @@ import UserManager from './components/UserManager';
 
 import { User, ConnectedApp, ViewState } from './types';
 
-/* =======================
-   DATA MANAGEMENT
-======================= */
 const INITIAL_APPS: ConnectedApp[] = [];
 const INITIAL_USERS: User[] = [];
 
-/* =======================
-   APP
-======================= */
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
@@ -33,7 +27,6 @@ const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-  /* ---------- Responsive ---------- */
   useEffect(() => {
     const handleResize = () => {
       setIsSidebarOpen(window.innerWidth >= 768);
@@ -43,17 +36,30 @@ const App: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  /* ---------- HELPER: Extract URL from Host ---------- */
+  const getApiUrlFromHost = (host?: string) => {
+    if (!host) return null;
+    const parts = host.split('.');
+    if (parts.length >= 2 && parts[0] === 'db') {
+      // db.ref.supabase.co -> https://ref.supabase.co
+      return `https://${parts[1]}.supabase.co`;
+    }
+    return null;
+  };
+
   /* ---------- REAL DATA FETCHING ---------- */
   const fetchAllRemoteUsers = async () => {
     let allUsers: User[] = [];
 
     for (const app of apps) {
-      if (app.dbType === 'supabase' && app.apiUrl && app.apiKey) {
+      // Logic: Use provided API Key + Derived URL from Host
+      const apiUrl = getApiUrlFromHost(app.dbHost);
+
+      if (apiUrl && app.apiKey) {
         try {
-          // Fetch from the configured table (Defaulting to 'registrations' based on user need)
-          // We order by created_at desc to get newest first
           const tableName = app.tableName || 'registrations';
-          const response = await fetch(`${app.apiUrl}/rest/v1/${tableName}?select=*&order=created_at.desc`, {
+          // Query: Get all registrations
+          const response = await fetch(`${apiUrl}/rest/v1/${tableName}?select=*&order=created_at.desc`, {
             headers: {
               'apikey': app.apiKey,
               'Authorization': `Bearer ${app.apiKey}`
@@ -63,10 +69,8 @@ const App: React.FC = () => {
           if (response.ok) {
             const data = await response.json();
             
-            // MAP SQL COLUMNS TO FRONTEND TYPES
-            // SQL: id, name, email, password, whatsapp, reason, status, created_at
+            // Map Columns
             const mappedUsers: User[] = data.map((record: any) => {
-              // Normalize Status: Database 'approved'/'active' -> Frontend 'active'
               const rawStatus = (record.status || 'pending').toLowerCase();
               let feStatus: 'active' | 'pending' | 'suspended' = 'pending';
               
@@ -77,16 +81,16 @@ const App: React.FC = () => {
                 id: record.id?.toString(),
                 name: record.name || record.full_name || 'Unknown User',
                 email: record.email || 'no-email',
-                phoneNumber: record.whatsapp, // Specific to your SQL
-                password: record.password,    // Specific to your SQL
+                phoneNumber: record.whatsapp, 
+                password: record.password,    
                 sourceAppId: app.id,
                 sourceAppName: app.name,
                 status: feStatus,
-                subscriptionTier: 'free', // Default, unless updated later
+                subscriptionTier: 'free', 
                 registeredAt: record.created_at || new Date().toISOString(),
-                subscriptionEnd: record.subscription_expiry, // Might be null for pending
+                subscriptionEnd: record.subscription_expiry, 
                 lastActive: record.last_updated || record.created_at || 'Never',
-                reason: record.reason // Specific to your SQL
+                reason: record.reason 
               };
             });
             
@@ -99,7 +103,6 @@ const App: React.FC = () => {
       }
     }
     
-    // Update state to reflect database reality
     if (apps.length > 0) {
       setUsers(allUsers);
     }
@@ -109,33 +112,31 @@ const App: React.FC = () => {
     setApps(prev => prev.map(a => a.id === appId ? { ...a, userCount: count, lastSync: new Date().toLocaleTimeString() } : a));
   };
 
-  // Poll for updates (Simulation of Realtime)
   useEffect(() => {
     if (!isAuthenticated) return;
     fetchAllRemoteUsers();
-    const interval = setInterval(fetchAllRemoteUsers, 5000); // 5s polling for faster feedback
+    const interval = setInterval(fetchAllRemoteUsers, 5000); 
     return () => clearInterval(interval);
   }, [isAuthenticated, apps.length]);
 
-  /* ---------- LOGIC UPDATE USER (DUAL TABLE) ---------- */
+  /* ---------- UPDATE HANDLER ---------- */
   const handleUpdateUser = async (id: string, updates: Partial<User>) => {
-    // 1. Optimistic UI Update
     setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...updates } : u)));
 
-    // 2. Real Backend Update
     const userToUpdate = users.find(u => u.id === id);
     if (!userToUpdate) return;
 
     const app = apps.find(a => a.id === userToUpdate.sourceAppId);
-    if (app && app.dbType === 'supabase' && app.apiUrl && app.apiKey) {
+    const apiUrl = getApiUrlFromHost(app?.dbHost);
+
+    if (app && apiUrl && app.apiKey) {
        try {
          const tableName = app.tableName || 'registrations';
 
-         // === SCENARIO 1: APPROVING A USER ===
+         // SCENARIO 1: APPROVE
          if (updates.status === 'active') {
-           
-           // A. Update 'registrations' table status to 'approved'
-           await fetch(`${app.apiUrl}/rest/v1/${tableName}?id=eq.${id}`, {
+           // A. Update registration status
+           await fetch(`${apiUrl}/rest/v1/${tableName}?id=eq.${id}`, {
              method: 'PATCH',
              headers: {
                'apikey': app.apiKey,
@@ -143,15 +144,14 @@ const App: React.FC = () => {
                'Content-Type': 'application/json',
                'Prefer': 'return=minimal'
              },
-             body: JSON.stringify({ status: 'approved' }) // Match SQL 'approved' enum/varchar
+             body: JSON.stringify({ status: 'approved' }) 
            });
 
-           // B. Insert into 'users' table (Active Users Table)
-           // We create a new entry in the 'users' table as per your SQL schema
+           // B. Create 'users' record
            const subscriptionExpiry = updates.subscriptionEnd || new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString();
            
            const newUserPayload = {
-             user_id: `USR-${id}-${Date.now()}`, // Generate a unique string ID
+             user_id: `USR-${id}-${Date.now()}`, 
              full_name: userToUpdate.name,
              email: userToUpdate.email,
              role: 'viewer',
@@ -161,7 +161,7 @@ const App: React.FC = () => {
              performance_score: 0
            };
 
-           await fetch(`${app.apiUrl}/rest/v1/users`, {
+           await fetch(`${apiUrl}/rest/v1/users`, {
              method: 'POST',
              headers: {
                'apikey': app.apiKey,
@@ -171,12 +171,10 @@ const App: React.FC = () => {
              },
              body: JSON.stringify(newUserPayload)
            });
-
-           console.log("User approved: Updated registration and created active user record.");
          } 
-         // === SCENARIO 2: REJECTING/SUSPENDING ===
+         // SCENARIO 2: REJECT
          else if (updates.status === 'suspended') {
-           await fetch(`${app.apiUrl}/rest/v1/${tableName}?id=eq.${id}`, {
+           await fetch(`${apiUrl}/rest/v1/${tableName}?id=eq.${id}`, {
              method: 'PATCH',
              headers: {
                'apikey': app.apiKey,
@@ -187,11 +185,9 @@ const App: React.FC = () => {
              body: JSON.stringify({ status: 'rejected' })
            });
          }
-         // === SCENARIO 3: UPDATING SUBSCRIPTION ONLY ===
+         // SCENARIO 3: EXTEND SUB
          else if (updates.subscriptionEnd) {
-           // We might need to update the 'users' table specifically for sub updates
-           // Assumption: We look up by email since IDs might differ between tables
-           await fetch(`${app.apiUrl}/rest/v1/users?email=eq.${userToUpdate.email}`, {
+           await fetch(`${apiUrl}/rest/v1/users?email=eq.${userToUpdate.email}`, {
              method: 'PATCH',
              headers: {
                'apikey': app.apiKey,
@@ -202,12 +198,10 @@ const App: React.FC = () => {
            });
          }
 
-         // Trigger refresh to sync state
          setTimeout(fetchAllRemoteUsers, 500);
 
        } catch (err) {
          console.error("Database sync failed", err);
-         alert("Failed to sync with database. Check console for details.");
        }
     }
   };
@@ -216,9 +210,7 @@ const App: React.FC = () => {
     const user = users.find(u => u.id === id);
     if (!user) return;
 
-    // Logic to calculate new date
     const currentEnd = user.subscriptionEnd ? new Date(user.subscriptionEnd) : new Date();
-    // If expired, start from today
     const baseDate = currentEnd < new Date() ? new Date() : currentEnd;
     const newEnd = new Date(baseDate);
 
@@ -241,7 +233,7 @@ const App: React.FC = () => {
   };
 
   const handleDeleteApp = (id: string) => {
-    if (!confirm('Disconnect this database? Local data view will be cleared.')) return;
+    if (!confirm('Disconnect this database?')) return;
     setApps(prev => prev.filter(a => a.id !== id));
     setUsers(prev => prev.filter(u => u.sourceAppId !== id));
   };

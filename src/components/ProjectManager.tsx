@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Database, Server, MoreHorizontal, Code, Activity, RefreshCw, X, Settings, Trash2, Edit2, CheckCircle2, AlertTriangle, Loader2, Globe } from 'lucide-react';
+import { Plus, Database, Server, MoreHorizontal, RefreshCw, Trash2, Edit2, CheckCircle2, AlertTriangle, Loader2, Globe, Shield } from 'lucide-react';
 import { ConnectedApp } from '../types';
 
 interface ProjectManagerProps {
@@ -16,20 +16,22 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
   // Form State
   const [isEditing, setIsEditing] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
+  
+  // General Info
   const [appName, setAppName] = useState('');
-  const [dbType, setDbType] = useState<'postgres' | 'mysql' | 'mongodb' | 'supabase'>('supabase');
-  
-  // Standard DB Fields
-  const [dbHost, setDbHost] = useState('');
-  const [dbPort, setDbPort] = useState('');
-  const [dbUser, setDbUser] = useState('');
-  
-  // Supabase Fields
-  const [sbUrl, setSbUrl] = useState('');
-  const [sbKey, setSbKey] = useState('');
-  const [sbTable, setSbTable] = useState('users');
-
   const [description, setDescription] = useState('');
+  const [dbType, setDbType] = useState<'postgres' | 'mysql' | 'mongodb' | 'supabase'>('postgres'); // Default to Postgres per screenshot
+
+  // Connection Details (Matching Screenshot)
+  const [dbHost, setDbHost] = useState(''); // db.ref.supabase.co
+  const [dbPort, setDbPort] = useState('5432');
+  const [dbName, setDbName] = useState('postgres');
+  const [dbUser, setDbUser] = useState('postgres');
+  const [dbPass, setDbPass] = useState('');
+  
+  // Critical for Web Access
+  const [apiKey, setApiKey] = useState('');
+  const [tableName, setTableName] = useState('registrations'); // Default table
   
   // Connection Test State
   const [isTesting, setIsTesting] = useState(false);
@@ -40,14 +42,17 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
     setIsEditing(false);
     setEditId(null);
     setAppName('');
-    setDbType('supabase');
+    setDbType('postgres');
+    setDescription('');
+    
     setDbHost('');
     setDbPort('5432');
-    setDbUser('');
-    setSbUrl('');
-    setSbKey('');
-    setSbTable('users');
-    setDescription('');
+    setDbName('postgres');
+    setDbUser('postgres');
+    setDbPass('');
+    setApiKey('');
+    setTableName('registrations');
+
     setTestStatus('none');
     setTestMessage('');
     setIsModalOpen(true);
@@ -60,16 +65,13 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
     setDbType(app.dbType);
     setDescription(app.description);
 
-    if (app.dbType === 'supabase') {
-      setSbUrl(app.apiUrl || '');
-      setSbKey(app.apiKey || '');
-      setSbTable(app.tableName || 'users');
-    } else {
-       const parts = app.connectionString.split('@');
-       setDbHost(parts[1] ? parts[1].split(':')[0] : 'localhost');
-       setDbUser('admin'); 
-       setDbPort('5432');
-    }
+    setDbHost(app.dbHost || '');
+    setDbPort(app.dbPort || '5432');
+    setDbName(app.dbName || 'postgres');
+    setDbUser(app.dbUser || 'postgres');
+    setDbPass(app.dbPass || '');
+    setApiKey(app.apiKey || '');
+    setTableName(app.tableName || 'registrations');
 
     setTestStatus('none');
     setTestMessage('');
@@ -77,70 +79,91 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
     setActiveMenuId(null);
   };
 
+  // Helper to get Project ID from Host
+  const getProjectId = (host: string) => {
+    // Expected format: db.abcdefghijkl.supabase.co
+    const parts = host.split('.');
+    if (parts.length >= 2 && parts[0] === 'db') {
+      return parts[1];
+    }
+    return null;
+  };
+
   const handleTestConnection = async () => {
     setIsTesting(true);
     setTestStatus('none');
     setTestMessage('');
 
-    if (dbType === 'supabase') {
-      if (!sbUrl || !sbKey) {
-        setTestStatus('failed');
-        setTestMessage('URL and API Key are required');
-        setIsTesting(false);
-        return;
-      }
-      try {
-        // Try to fetch 1 record to verify connection
-        const response = await fetch(`${sbUrl}/rest/v1/${sbTable}?select=count&limit=1`, {
-          headers: {
-            'apikey': sbKey,
-            'Authorization': `Bearer ${sbKey}`
-          }
-        });
-        if (response.ok) {
-          setTestStatus('success');
-          setTestMessage('Supabase connection established.');
-        } else {
-          setTestStatus('failed');
-          setTestMessage(`Error ${response.status}: ${response.statusText}`);
-        }
-      } catch (err) {
-        setTestStatus('failed');
-        setTestMessage('Network error or Invalid URL');
-      }
+    // Logic: Web Apps CANNOT use TCP (Host/Port/Pass). We must use HTTP (Url/Key).
+    // We construct the URL from the Host.
+    const projectId = getProjectId(dbHost);
+
+    if (!projectId) {
+      setTestStatus('failed');
+      setTestMessage('Invalid Host format. Expected: db.[project-ref].supabase.co');
       setIsTesting(false);
-    } else {
-      // Simulate for others
-      setTimeout(() => {
-        setIsTesting(false);
-        setTestStatus('success');
-        setTestMessage('Socket connection simulated OK.');
-      }, 1500);
+      return;
     }
+
+    if (!apiKey) {
+      setTestStatus('failed');
+      setTestMessage('API Key is required for Web Connection.');
+      setIsTesting(false);
+      return;
+    }
+
+    try {
+      const derivedUrl = `https://${projectId}.supabase.co`;
+      
+      // Try to fetch 1 record from the specified table
+      const response = await fetch(`${derivedUrl}/rest/v1/${tableName}?select=count&limit=1`, {
+        headers: {
+          'apikey': apiKey,
+          'Authorization': `Bearer ${apiKey}`
+        }
+      });
+
+      if (response.ok) {
+        setTestStatus('success');
+        setTestMessage('Connection Successful!');
+      } else if (response.status === 404) {
+        setTestStatus('failed');
+        setTestMessage(`Table '${tableName}' not found.`);
+      } else if (response.status === 401) {
+        setTestStatus('failed');
+        setTestMessage('Unauthorized. Check API Key.');
+      } else {
+        setTestStatus('failed');
+        setTestMessage(`Error: ${response.statusText}`);
+      }
+    } catch (err) {
+      setTestStatus('failed');
+      setTestMessage('Network Error. Check Host URL.');
+    }
+    setIsTesting(false);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    let mockConnString = '';
-    if (dbType === 'supabase') {
-      const shortUrl = sbUrl.replace('https://', '').split('.')[0];
-      mockConnString = `wss://${shortUrl}.supabase.co/realtime/v1`;
-    } else {
-      mockConnString = `${dbType}://${dbUser}:***@${dbHost}:${dbPort}/${appName.toLowerCase().replace(/\s/g, '_')}`;
-    }
+    const mockConnString = `${dbType}://${dbUser}:***@${dbHost}:${dbPort}/${dbName}`;
 
     const appData: Partial<ConnectedApp> = {
         name: appName,
-        dbType,
+        dbType: 'supabase', // Force internal type to Supabase for logic handling
         connectionString: mockConnString,
         description,
-        status: 'connected',
+        status: testStatus === 'success' ? 'connected' : 'error',
         lastSync: 'Just now',
-        // Real Data Fields
-        apiUrl: dbType === 'supabase' ? sbUrl : undefined,
-        apiKey: dbType === 'supabase' ? sbKey : undefined,
-        tableName: dbType === 'supabase' ? sbTable : undefined,
+        
+        // Save the fields
+        dbHost,
+        dbPort,
+        dbUser,
+        dbPass,
+        dbName,
+        apiKey,
+        tableName
     };
 
     if (isEditing && editId) {
@@ -162,7 +185,7 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Database Connections</h1>
-          <p className="text-slate-500 mt-1">Configure connections to external application databases for monitoring.</p>
+          <p className="text-slate-500 mt-1">Configure connections to external Supabase / PostgreSQL instances.</p>
         </div>
         <button
           onClick={(e) => { e.stopPropagation(); openAddModal(); }}
@@ -177,7 +200,7 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
         <div className="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
           <Database className="h-12 w-12 text-slate-300 mx-auto mb-3" />
           <h3 className="text-lg font-medium text-slate-600">No Databases Connected</h3>
-          <p className="text-slate-400 max-w-md mx-auto mt-2">Add a Supabase or SQL connection to start syncing user data to the dashboard.</p>
+          <p className="text-slate-400 max-w-md mx-auto mt-2">Add your Supabase connection details to start managing users.</p>
           <button
              onClick={(e) => { e.stopPropagation(); openAddModal(); }}
              className="mt-6 text-indigo-600 font-medium hover:underline"
@@ -221,7 +244,7 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
             <div>
               <div className="flex justify-between items-start mb-4">
                 <div className="p-3 bg-indigo-50 rounded-lg group-hover:bg-indigo-100 transition-colors">
-                  {app.dbType === 'supabase' ? <Globe className="h-6 w-6 text-indigo-600" /> : <Database className="h-6 w-6 text-indigo-600" />}
+                  <Globe className="h-6 w-6 text-indigo-600" />
                 </div>
                 <div className={`mr-8 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
                   app.status === 'connected' 
@@ -237,11 +260,11 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
               <div className="space-y-3">
                 <div className="flex items-center text-xs text-slate-600 bg-slate-50 p-2 rounded border border-slate-100 font-mono overflow-hidden">
                   <Server className="h-3 w-3 mr-2 text-slate-400 flex-shrink-0" />
-                  <span className="truncate">{app.connectionString}</span>
+                  <span className="truncate">{app.dbHost}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs text-slate-500">
                   <span className="flex items-center gap-1">
-                    <Activity className="h-3 w-3" /> Type: {app.dbType === 'supabase' ? 'SUPABASE' : app.dbType.toUpperCase()}
+                    <Database className="h-3 w-3" /> Table: {app.tableName}
                   </span>
                   <span className="flex items-center gap-1">
                     <RefreshCw className="h-3 w-3" /> Sync: {app.lastSync}
@@ -264,6 +287,7 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 transform transition-all scale-100" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-xl font-bold text-slate-800 mb-4">{isEditing ? 'Edit Connection' : 'New Database Connection'}</h2>
             <form onSubmit={handleSubmit} className="space-y-4">
+              
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <label className="block text-sm font-medium text-slate-700 mb-1">Application Name</label>
@@ -277,111 +301,105 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
                   />
                 </div>
                 
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Database Type</label>
-                  <select
-                    value={dbType}
-                    onChange={(e) => setDbType(e.target.value as any)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
-                  >
-                    <option value="supabase">Supabase / MySQL via Supabase</option>
-                    <option value="postgres">PostgreSQL (Simulated)</option>
-                    <option value="mysql">MySQL (Simulated)</option>
-                    <option value="mongodb">MongoDB (Simulated)</option>
-                  </select>
+                {/* Database Type */}
+                <div className="col-span-2">
+                   <label className="block text-sm font-medium text-slate-700 mb-1">Database Type</label>
+                   <select 
+                     value={dbType}
+                     onChange={(e) => setDbType(e.target.value as any)}
+                     className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"
+                   >
+                     <option value="postgres">PostgreSQL</option>
+                     <option value="mysql">MySQL</option>
+                   </select>
                 </div>
 
-                {/* Conditional Fields for Supabase */}
-                {dbType === 'supabase' ? (
-                  <>
-                     <div className="col-span-2">
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Supabase Project URL</label>
-                      <input
-                        type="url"
-                        required
-                        value={sbUrl}
-                        onChange={(e) => setSbUrl(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm"
-                        placeholder="https://xyz.supabase.co"
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Service Role / Anon Key</label>
-                      <input
-                        type="password"
-                        required
-                        value={sbKey}
-                        onChange={(e) => setSbKey(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm"
-                        placeholder="eyJhbGciOiJIUzI1NiIsInR..."
-                      />
-                      <p className="text-[10px] text-slate-500 mt-1">Used to Fetch and Patch user data securely via REST API.</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Table Name</label>
-                      <input
-                        type="text"
-                        value={sbTable}
-                        onChange={(e) => setSbTable(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                        placeholder="users"
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Port</label>
-                      <input
-                        type="text"
-                        value={dbPort}
-                        onChange={(e) => setDbPort(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                        placeholder="5432"
-                      />
-                    </div>
+                {/* Host / Port */}
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Host</label>
+                  <input
+                    type="text"
+                    required
+                    value={dbHost}
+                    onChange={(e) => setDbHost(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm"
+                    placeholder="db.ref.supabase.co"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">Copy "Host" from your Supabase Database Settings.</p>
+                </div>
 
-                    <div className="col-span-2">
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Host / Endpoint</label>
-                      <input
-                        type="text"
-                        required
-                        value={dbHost}
-                        onChange={(e) => setDbHost(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm"
-                        placeholder="db.production.internal"
-                      />
-                    </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Port</label>
+                  <input
+                    type="text"
+                    value={dbPort}
+                    onChange={(e) => setDbPort(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono"
+                    placeholder="5432"
+                  />
+                </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Username</label>
-                      <input
-                        type="text"
-                        value={dbUser}
-                        onChange={(e) => setDbUser(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                        placeholder="admin"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
-                      <input
-                        type="password"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                        placeholder="••••••••"
-                      />
-                    </div>
-                  </>
-                )}
+                <div>
+                   <label className="block text-sm font-medium text-slate-700 mb-1">Database</label>
+                  <input
+                    type="text"
+                    value={dbName}
+                    onChange={(e) => setDbName(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                    placeholder="postgres"
+                  />
+                </div>
+
+                {/* User / Pass */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">User</label>
+                  <input
+                    type="text"
+                    value={dbUser}
+                    onChange={(e) => setDbUser(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                    placeholder="postgres"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                  <input
+                    type="password"
+                    value={dbPass}
+                    onChange={(e) => setDbPass(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                    placeholder="••••••••"
+                  />
+                </div>
+                
+                {/* IMPORTANT: API Key Field */}
+                <div className="col-span-2 bg-amber-50 p-3 rounded-lg border border-amber-200 mt-2">
+                   <div className="flex items-center gap-2 mb-2">
+                      <Shield className="h-4 w-4 text-amber-700" />
+                      <label className="block text-sm font-bold text-amber-900">Supabase API Key (Required)</label>
+                   </div>
+                   <input
+                    type="password"
+                    required
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    className="w-full px-3 py-2 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none font-mono text-xs bg-white"
+                    placeholder="anon public key (starts with eyJ...)"
+                  />
+                   <p className="text-[10px] text-amber-700 mt-2 leading-tight">
+                     <strong>Why is this needed?</strong> Web browsers cannot connect directly to Port 5432 (TCP). This app uses the Host above to find your project, but requires the API Key to authenticate safely over HTTP.
+                   </p>
+                </div>
 
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
-                  <textarea
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none h-20 resize-none"
-                    placeholder="What does this app do?"
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Target Table (Registration)</label>
+                  <input
+                    type="text"
+                    value={tableName}
+                    onChange={(e) => setTableName(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                    placeholder="registrations"
                   />
                 </div>
               </div>
@@ -396,20 +414,16 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({ apps, onAddApp, onUpdat
                     disabled={isTesting}
                     className="text-xs bg-white border border-slate-300 px-3 py-1 rounded hover:bg-slate-50 transition-colors"
                    >
-                     {isTesting ? 'Pinging...' : 'Test Connection'}
+                     {isTesting ? 'Verifying...' : 'Test Connection'}
                    </button>
                 </div>
-                {isTesting && (
-                  <div className="mt-2 text-xs text-indigo-600 flex items-center gap-1">
-                    <Loader2 className="h-3 w-3 animate-spin" /> Verifying credentials...
-                  </div>
-                )}
-                {!isTesting && testStatus === 'success' && (
+                
+                {testStatus === 'success' && (
                    <div className="mt-2 text-xs text-emerald-600 flex items-center gap-1 font-medium animate-fade-in">
                     <CheckCircle2 className="h-3 w-3" /> {testMessage}
                   </div>
                 )}
-                {!isTesting && testStatus === 'failed' && (
+                {testStatus === 'failed' && (
                    <div className="mt-2 text-xs text-red-600 flex items-center gap-1 font-medium animate-fade-in">
                     <AlertTriangle className="h-3 w-3" /> {testMessage}
                   </div>
