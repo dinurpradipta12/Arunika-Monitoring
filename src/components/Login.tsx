@@ -18,7 +18,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
     // Simulate network delay for better UX
     setTimeout(() => {
-      if (email === 'adminsc@snaillabs.dom' && password === 'sc1234') {
+      if (email === 'admin1@arunika.com' && password === '123456') {
         onLogin();
       } else {
         setError('Invalid credentials. Access denied.');
