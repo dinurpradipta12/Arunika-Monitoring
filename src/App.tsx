@@ -37,7 +37,13 @@ const INITIAL_USERS: User[] = [
 ];
 
 const App: React.FC = () => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      return typeof window !== 'undefined' && !!localStorage.getItem('auth');
+    } catch {
+      return false;
+    }
+  });
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
   const [apps, setApps] = useState<ConnectedApp[]>(INITIAL_APPS);
   const [users, setUsers] = useState<User[]>(INITIAL_USERS);
@@ -78,10 +84,16 @@ const App: React.FC = () => {
   const handleLogout = () => {
     setIsAuthenticated(false);
     setCurrentView('dashboard');
+    try { localStorage.removeItem('auth'); } catch {}
+  };
+
+  const handleLogin = () => {
+    setIsAuthenticated(true);
+    try { localStorage.setItem('auth', '1'); } catch {}
   };
 
   if (!isAuthenticated) {
-    return <Login onLogin={() => setIsAuthenticated(true)} />;
+    return <Login onLogin={handleLogin} />;
   }
 
   const NavItem = ({ view, icon: Icon, label }: { view: ViewState, icon: any, label: string }) => (
